@@ -639,6 +639,83 @@ function handleStartRound(
   );
 }
 
+function handleSubmitRecording(ws, data) {
+  const room = getRoomForSocket(ws);
+  const player = getPlayerForSocket(ws);
+
+  if (!room || !player) {
+    return;
+  }
+
+  if (!['RECORDING', 'PLAYBACK'].includes(room.phase)) {
+    send(ws, 'ERROR', {
+      message: 'Non puoi inviare una registrazione in questa fase.'
+    });
+    return;
+  }
+
+  const lineId = String(data.lineId || '').trim();
+  const mimeType = String(data.mimeType || 'audio/webm').trim();
+  const audio = String(data.audio || '');
+
+  if (!lineId || !audio) {
+    send(ws, 'ERROR', {
+      message: 'Registrazione non valida.'
+    });
+    return;
+  }
+
+  // Limite prudenziale: ~8 MB per singola registrazione.
+  if (audio.length > 8 * 1024 * 1024) {
+    send(ws, 'ERROR', {
+      message: 'La registrazione è troppo grande.'
+    });
+    return;
+  }
+
+  player.recordings[lineId] = {
+    lineId,
+    mimeType,
+    audio,
+    updatedAt: Date.now()
+  };
+
+  send(ws, 'RECORDING_ACCEPTED', {
+    playerId: player.id,
+    lineId
+  });
+
+  broadcast(
+    room,
+    'RECORDING_UPDATE',
+    {
+      playerId: player.id,
+      playerName: player.name,
+      lineId,
+      mimeType,
+      audio
+    }
+  );
+
+  console.log(
+    `Recording received: ${room.code} / ${player.name} / ${lineId}`
+  );
+}
+
+function sendExistingRecordings(ws, room) {
+  for (const player of room.players) {
+    for (const recording of Object.values(player.recordings || {})) {
+      send(ws, 'RECORDING_UPDATE', {
+        playerId: player.id,
+        playerName: player.name,
+        lineId: recording.lineId,
+        mimeType: recording.mimeType,
+        audio: recording.audio
+      });
+    }
+  }
+}
+
 function handlePhaseChange(
   ws,
   data
@@ -957,6 +1034,13 @@ wss.on(
                 data
               );
               break;
+
+            case 'SUBMIT_RECORDING':
+                handleSubmitRecording(
+                    ws,
+                    data
+                );
+                break;
 
             case 'SUBMIT_VOTE':
               handleVote(

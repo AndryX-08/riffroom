@@ -32,6 +32,7 @@ const state = {
   finalAudioContext: null,
   finalMixSources: [],
   finalMixPlaying: false,
+  remoteRecordings: {},
 };
 
 const SERVER_URL =
@@ -219,6 +220,41 @@ function connect() {
   return socket;
 }
 
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onloadend = () => {
+      const result = String(reader.result || '');
+      const commaIndex = result.indexOf(',');
+
+      resolve(
+        commaIndex >= 0
+          ? result.slice(commaIndex + 1)
+          : result
+      );
+    };
+
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+function base64ToBlob(base64, mimeType = 'audio/webm') {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+
+  return new Blob([bytes], {
+    type: mimeType
+  });
+}
+
+
+
 function waitForSocketOpen(timeout = 20000) {
   return new Promise((resolve, reject) => {
     if (socket?.readyState === WebSocket.OPEN) {
@@ -323,6 +359,17 @@ function handleServerMessage(data) {
       console.log('🗳️ Voti aggiornati:', data.results);
       break;
 
+    case 'RECORDING_ACCEPTED':
+  console.log(
+    '🎙️ Registrazione ricevuta dal server:',
+    data.lineId
+  );
+  break;
+
+    case 'RECORDING_UPDATE':
+      handleRemoteRecording(data);
+      break;
+
     case 'RESULTS':
       handleResults(data);
       break;
@@ -341,6 +388,36 @@ function handleServerMessage(data) {
         data
       );
   }
+}
+
+function handleRemoteRecording(data) {
+  if (!data.playerId || !data.lineId || !data.audio) {
+    return;
+  }
+
+  // La nostra registrazione locale è già presente.
+  // Non serve duplicarla.
+  if (data.playerId === state.playerId) {
+    return;
+  }
+
+  if (!state.remoteRecordings[data.playerId]) {
+    state.remoteRecordings[data.playerId] = {};
+  }
+
+  state.remoteRecordings[data.playerId][data.lineId] = {
+    playerId: data.playerId,
+    playerName: data.playerName || 'Giocatore',
+    lineId: data.lineId,
+    mimeType: data.mimeType || 'audio/webm',
+    audio: data.audio
+  };
+
+  console.log(
+    '🎧 Registrazione ricevuta:',
+    data.playerName,
+    data.lineId
+  );
 }
 
 function handleRoomState(data) {
@@ -1358,7 +1435,7 @@ async function startCurrentLineRecording() {
   }
 }
 
-function finishCurrentRecording() {
+async function finishCurrentRecording() {
   const key =
     getLineKey();
 
@@ -1384,6 +1461,30 @@ function finishCurrentRecording() {
       state.chunks,
       { type: mimeType }
     );
+
+  const line = state.pack?.lines?.[state.line];
+
+if (line && blob) {
+  try {
+    const audio = await blobToBase64(blob);
+
+    send('SUBMIT_RECORDING', {
+      lineId: line.id,
+      mimeType: blob.type || 'audio/webm',
+      audio
+    });
+
+    console.log(
+      '📤 Registrazione inviata:',
+      line.id
+    );
+  } catch (error) {
+    console.error(
+      '❌ Errore invio registrazione:',
+      error
+    );
+  }
+}
 
   const oldRecording =
     state.recordings[key];
@@ -1441,6 +1542,8 @@ function finishCurrentRecording() {
   toast(
     'Registrazione completata.'
   );
+
+  
 }
 
 let finalAudioContext = null;
@@ -1513,32 +1616,65 @@ async function prepareFinalMix() {
   const decoded = [];
 
   for (const line of state.pack.lines) {
-    const recording = state.recordings[line.id];
+    const localRecording = state.recordings[line.id];
 
-    if (!recording) {
-      continue;
+    if (localRecording) {
+      const blob = await getRecordingBlob(localRecording);
+
+      if (blob) {
+        const arrayBuffer = await blob.arrayBuffer();
+
+        const audioBuffer =
+          await audioContext.decodeAudioData(
+            arrayBuffer.slice(0)
+          );
+
+        decoded.push({
+          line,
+          playerId: state.playerId,
+          audioBuffer
+        });
+      }
     }
 
-    const blob = await getRecordingBlob(recording);
+    for (
+      const playerRecordings of Object.values(
+        state.remoteRecordings
+      )
+    ) {
+      const remoteRecording =
+        playerRecordings[line.id];
 
-    if (!blob) {
-      continue;
+      if (!remoteRecording) {
+        continue;
+      }
+
+      const blob = base64ToBlob(
+        remoteRecording.audio,
+        remoteRecording.mimeType
+      );
+
+      const arrayBuffer =
+        await blob.arrayBuffer();
+
+      const audioBuffer =
+        await audioContext.decodeAudioData(
+          arrayBuffer.slice(0)
+        );
+
+      decoded.push({
+        line,
+        playerId: remoteRecording.playerId,
+        playerName: remoteRecording.playerName,
+        audioBuffer
+      });
     }
-
-    const arrayBuffer = await blob.arrayBuffer();
-
-    const audioBuffer = await audioContext.decodeAudioData(
-      arrayBuffer.slice(0)
-    );
-
-    decoded.push({
-      line,
-      audioBuffer
-    });
   }
 
   if (!decoded.length) {
-    throw new Error('Non ci sono registrazioni da riprodurre.');
+    throw new Error(
+      'Non ci sono registrazioni da riprodurre.'
+    );
   }
 
   return {
@@ -1775,7 +1911,7 @@ function stopCurrentRecording() {
 
 async function playCurrentRecording() {
   stopFinalMix();
-  
+
   const recording =
     state.recordings[
       getLineKey()
