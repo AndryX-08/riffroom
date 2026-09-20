@@ -1,6 +1,174 @@
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
-const state = { screen: 'home', mode: 'parallel', scene: 'plan', room: 'K7M-2Q', players: [{ name: 'Host', emoji: '🦊', color: '#ffd45c', host: true }], line: 0, take: 1, recordings: {}, recorder: null, chunks: [], timer: null, seconds: 60, effect: 'normale', phase: 'listen', pack: null };
+const state = {
+  screen: 'home',
+  mode: 'parallel',
+  scene: 'plan',
+  room: '',
+  playerId: null,
+  hostId: null,
+  connected: false,
+  phase: 'LOBBY',
+  players: [],
+  line: 0,
+  take: 1,
+  recordings: {},
+  recorder: null,
+  chunks: [],
+  timer: null,
+  seconds: 60,
+  effect: 'normale',
+  pack: null
+};
+const SERVER_URL =
+  location.hostname === 'localhost'
+    ? 'ws://localhost:10000'
+    : 'wss://riffroomserver.onrender.com';
+
+let socket = null;
+
+function connectSocket() {
+  socket = new WebSocket(SERVER_URL);
+
+  socket.addEventListener('open', () => {
+    state.connected = true;
+    console.log('🟢 Connesso al server');
+    updateConnectionStatus();
+  });
+
+  socket.addEventListener('close', () => {
+    state.connected = false;
+    updateConnectionStatus();
+    console.log('🔴 Connessione chiusa');
+  });
+
+  socket.addEventListener('error', (error) => {
+    console.error('WebSocket error:', error);
+  });
+
+  socket.addEventListener('message', (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      handleServerMessage(data);
+    } catch (error) {
+      console.error('Messaggio server non valido:', error);
+    }
+  });
+}
+
+function send(type, data = {}) {
+  if (!socket || socket.readyState !== WebSocket.OPEN) {
+    toast('Connessione al server non disponibile');
+    return;
+  }
+
+  socket.send(JSON.stringify({
+    type,
+    ...data
+  }));
+}
+
+function updateConnectionStatus() {
+  const dot = document.querySelector('.status-dot');
+  const label = document.querySelector('.status-text');
+
+  if (dot) {
+    dot.style.background = state.connected ? '#6ee7a8' : '#ff6b6b';
+  }
+
+  if (label) {
+    label.textContent = state.connected
+      ? 'online'
+      : 'disconnesso';
+  }
+}
+function handleServerMessage(data) {
+  console.log('📨 SERVER:', data);
+
+  switch (data.type) {
+    case 'CONNECTED':
+      console.log('Server WebSocket pronto');
+      break;
+
+    case 'ROOM_CREATED':
+      handleRoomCreated(data);
+      break;
+
+    case 'ROOM_JOINED':
+      handleRoomJoined(data);
+      break;
+
+    case 'ROOM_STATE':
+      handleRoomState(data);
+      break;
+
+    case 'GAME_STARTED':
+      handleGameStarted(data);
+      break;
+
+    case 'ERROR':
+      toast(data.message || 'Errore del server');
+      console.error('Server error:', data);
+      break;
+
+    default:
+      console.log('Evento server non gestito:', data.type);
+  }
+}
+function handleRoomCreated(data) {
+  state.room = data.roomCode;
+  state.playerId = data.playerId;
+  state.hostId = data.hostId;
+
+  $('#room-code-label').textContent = data.roomCode;
+
+  renderPlayers();
+  go('lobby');
+}
+
+function handleRoomJoined(data) {
+  state.room = data.roomCode;
+  state.playerId = data.playerId;
+  state.hostId = data.hostId;
+
+  $('#room-code-label').textContent = data.roomCode;
+
+  renderPlayers();
+  go('lobby');
+}
+
+function handleRoomState(data) {
+  if (data.roomCode) {
+    state.room = data.roomCode;
+  }
+
+  if (data.hostId) {
+    state.hostId = data.hostId;
+  }
+
+  if (Array.isArray(data.players)) {
+    state.players = data.players;
+  }
+
+  if (data.mode) {
+    state.mode = data.mode;
+  }
+
+  if (data.scene) {
+    state.scene = data.scene;
+  }
+
+  if (data.phase) {
+    state.phase = data.phase;
+  }
+
+  $('#room-code-label').textContent = state.room;
+
+  renderPlayers();
+}
+
+connectSocket();
+
 let lines = [
   ['MILO', '“Ok, ascoltami bene. Ho un piano.”'],
   ['DOT', '“Dimmi che non c’entra un secchio.”'],
@@ -19,10 +187,30 @@ function renderVotes() { const names = state.players.map((p) => p.name); if (!na
 $$('[data-go]').forEach((el) => el.addEventListener('click', () => go(el.dataset.go)));
 $$('.mode-option').forEach((el) => el.addEventListener('click', () => { state.mode = el.dataset.mode; setSelected('.mode-option', 'mode', state.mode); }));
 $$('.scene-option').forEach((el) => el.addEventListener('click', () => { state.scene = el.dataset.scene; setSelected('.scene-option', 'scene', state.scene); }));
-$('#create-room').addEventListener('click', () => { const name = $('#host-name').value.trim() || 'Host'; state.players[0].name = name; $('#room-code-label').textContent = state.room; renderPlayers(); go('lobby'); });
-$('#join-room').addEventListener('click', () => { const name = $('#join-name').value.trim() || 'Voce Misteriosa'; state.players = [{ name, emoji: '🦊', color: '#ffd45c', host: true }, { name: 'PixelPazzo', emoji: '🐙', color: '#bba7ff' }, { name: 'VoceCalda', emoji: '🐸', color: '#a9e4bb' }]; renderPlayers(); $('#room-code-label').textContent = ($('#room-code').value.trim().toUpperCase() || state.room).replace(/(.{3})/, '$1-'); go('lobby'); });
+$('#create-room').addEventListener('click', () => {
+  const name = $('#host-name').value.trim() || 'Host';
+
+  send('CREATE_ROOM', {
+    name,
+    mode: state.mode,
+    scene: state.scene
+  });
+});
 $('#copy-code').addEventListener('click', async () => { try { await navigator.clipboard.writeText(state.room); } catch {} toast(`Codice ${state.room} copiato!`); });
-$('#add-guest').addEventListener('click', () => { if (state.players.length >= 6) return toast('La stanza è piena!'); const guests = [{ name: 'PixelPazzo', emoji: '🐙', color: '#bba7ff' }, { name: 'VoceCalda', emoji: '🐸', color: '#a9e4bb' }, { name: 'DJ Biscotto', emoji: '🐼', color: '#ffb5a7' }, { name: 'MimoMax', emoji: '🐯', color: '#9edcf0' }]; state.players.push(guests[state.players.length - 1]); renderPlayers(); });
+$('#join-room').addEventListener('click', () => {
+  const name = $('#join-name').value.trim() || 'Voce Misteriosa';
+  const roomCode = $('#room-code').value.trim().toUpperCase();
+
+  if (!roomCode) {
+    toast('Inserisci il codice della stanza');
+    return;
+  }
+
+  send('JOIN_ROOM', {
+    name,
+    roomCode
+  });
+});
 $('#start-round').addEventListener('click', () => { $('#mode-label').textContent = state.mode === 'roles' ? 'cast condiviso' : 'ognuno per sé'; $('#record-title').textContent = state.scene === 'space' ? 'Missione spaziale' : state.scene === 'kitchen' ? 'Caos in cucina' : 'Il piano perfetto'; state.line = 0; state.recordings = {}; renderLines(); updateLine(); startTimer(); go('record'); });
 
 async function beginRecording() {
