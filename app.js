@@ -35,9 +35,9 @@ let socket = null;
 let socketPromise = null;
 
 let lines = [
-  ['MILO', '“Ok, ascoltami bene. Ho un piano.”'],
-  ['DOT', '“Dimmi che non c’entra un secchio.”'],
-  ['MILO', '“Tecnicamente… c’entrano due secchi.”']
+  ['MILO', '“Ok, ascoltami bene. Ho un piano.”', null],
+  ['DOT', '“Dimmi che non c’entra un secchio.”', null],
+  ['MILO', '“Tecnicamente… c’entrano due secchi.”', null]
 ];
 
 function normalizeRoomCode(value) {
@@ -80,18 +80,14 @@ function connectSocket() {
     ws.addEventListener('close', () => {
       state.connected = false;
       updateConnectionStatus();
-
       console.log('🔴 WebSocket disconnesso');
-
       socketPromise = null;
     });
 
     ws.addEventListener('error', error => {
       console.error('WebSocket error:', error);
-
       state.connected = false;
       updateConnectionStatus();
-
       reject(error);
     });
   });
@@ -160,13 +156,16 @@ function handleServerMessage(data) {
       handleRoomState(data);
       break;
 
-    case 'GAME_STARTED':
-      handleGameStarted(data);
+    case 'SCENE_LIBRARY':
+      state.sceneLibrary = Array.isArray(data.scenes)
+        ? data.scenes
+        : [];
+
+      renderSceneLibrary();
       break;
 
-    case 'SCENE_LIBRARY':
-      state.sceneLibrary = Array.isArray(data.scenes) ? data.scenes : [];
-      renderSceneLibrary();
+    case 'GAME_STARTED':
+      handleGameStarted(data);
       break;
 
     case 'PHASE_CHANGED':
@@ -189,7 +188,10 @@ function handleServerMessage(data) {
       break;
 
     default:
-      console.log('Evento server non gestito:', data.type);
+      console.log(
+        'Evento server non gestito:',
+        data.type
+      );
   }
 }
 
@@ -206,6 +208,7 @@ function handleRoomCreated(data) {
 
   go('lobby');
   syncLobbyControls();
+  renderSceneLibrary();
 }
 
 function handleRoomJoined(data) {
@@ -221,16 +224,37 @@ function handleRoomJoined(data) {
 
   go('lobby');
   syncLobbyControls();
+  renderSceneLibrary();
 }
 
 function handleRoomState(data) {
-  if (data.roomCode) state.room = data.roomCode;
-  if (data.hostId) state.hostId = data.hostId;
-  if (Array.isArray(data.players)) state.players = data.players;
-  if (data.mode) state.mode = data.mode;
-  if (data.scene) state.scene = data.scene;
-  if (data.sceneData) state.sceneData = data.sceneData;
-  if (data.phase) state.phase = data.phase;
+  if (data.roomCode) {
+    state.room = data.roomCode;
+  }
+
+  if (data.hostId) {
+    state.hostId = data.hostId;
+  }
+
+  if (Array.isArray(data.players)) {
+    state.players = data.players;
+  }
+
+  if (data.mode) {
+    state.mode = data.mode;
+  }
+
+  if (data.scene) {
+    state.scene = data.scene;
+  }
+
+  if (data.sceneData) {
+    state.sceneData = data.sceneData;
+  }
+
+  if (data.phase) {
+    state.phase = data.phase;
+  }
 
   if ($('#room-code-label')) {
     $('#room-code-label').textContent = state.room;
@@ -243,10 +267,14 @@ function handleRoomState(data) {
 
 function renderSceneLibrary() {
   const container = $('.scene-options');
-  if (!container) return;
+
+  if (!container) {
+    return;
+  }
 
   if (!state.sceneLibrary.length) {
-    container.innerHTML = '<div class="scene-empty">Nessuna scena disponibile.</div>';
+    container.innerHTML =
+      '<div class="scene-empty">Nessuna scena disponibile.</div>';
     return;
   }
 
@@ -257,6 +285,7 @@ function renderSceneLibrary() {
 
   container.innerHTML = state.sceneLibrary.map(scene => `
     <button
+      type="button"
       class="scene-option ${scene.id === state.scene ? 'selected' : ''}"
       data-scene="${escapeHtml(scene.id)}"
       ${isHost ? '' : 'disabled'}
@@ -266,7 +295,7 @@ function renderSceneLibrary() {
         <span>◉</span>
       </div>
       <strong>${escapeHtml(scene.title)}</strong>
-      <small>00:${String(scene.duration).padStart(2, '0')} · ${escapeHtml(scene.category)}</small>
+      <small>${formatSceneDuration(scene.duration)} · ${escapeHtml(scene.category)}</small>
     </button>
   `).join('');
 
@@ -277,11 +306,29 @@ function renderSceneLibrary() {
         return;
       }
 
-      state.scene = button.dataset.scene;
-      setSelected('.scene-option', 'scene', state.scene);
-      send('SET_SCENE', { scene: state.scene });
+      const sceneId = button.dataset.scene;
+
+      state.scene = sceneId;
+
+      setSelected(
+        '.scene-option',
+        'scene',
+        state.scene
+      );
+
+      send('SET_SCENE', {
+        scene: sceneId
+      });
     });
   });
+}
+
+function formatSceneDuration(seconds) {
+  const value = Number(seconds) || 0;
+  const minutes = Math.floor(value / 60);
+  const remaining = Math.floor(value % 60);
+
+  return `${String(minutes).padStart(2, '0')}:${String(remaining).padStart(2, '0')}`;
 }
 
 async function handleGameStarted(data) {
@@ -307,17 +354,16 @@ async function handleGameStarted(data) {
       state.sceneData?.title || 'Dub Together';
   }
 
-  // Prima entriamo nella schermata record
+  console.log('🎮 PARTITA INIZIATA');
+  console.log('🎬 SCENA:', state.sceneData);
+
   go('record');
 
-  // Poi carichiamo la scena
   await loadSharedScene();
 
-  // Aggiorniamo battute e interfaccia
   renderLines();
   updateLine();
 
-  // Impostiamo la fase
   setPhase('listen');
 }
 
@@ -327,95 +373,205 @@ async function loadSharedScene() {
   if (!scene) {
     console.error('❌ Dati della scena non disponibili');
     toast('Dati della scena non disponibili');
-    return;
+    return false;
+  }
+
+  if (!scene.video) {
+    console.error('❌ La scena non contiene un URL video:', scene);
+    toast('La scena non contiene un video');
+    return false;
+  }
+
+  if (!scene.riffpack) {
+    console.error('❌ La scena non contiene un RiffPack:', scene);
+    toast('La scena non contiene un RiffPack');
+    return false;
   }
 
   try {
-    console.log('🎬 Scena caricata:', scene.title);
-    console.log('🎬 URL video ricevuto dal server:', scene.video);
+    console.log('🎬 Caricamento scena:', scene.title);
+    console.log('🎥 URL video:', scene.video);
     console.log('📦 URL RiffPack:', scene.riffpack);
 
-    // 1. Carica il RiffPack
-    const response = await fetch(scene.riffpack);
+    // ─────────────────────────────
+    // 1. CARICAMENTO RIFFPACK
+    // ─────────────────────────────
+
+    const response = await fetch(scene.riffpack, {
+      cache: 'no-store'
+    });
 
     if (!response.ok) {
-      throw new Error(`RiffPack HTTP ${response.status}`);
+      throw new Error(
+        `RiffPack HTTP ${response.status}`
+      );
     }
 
     const pack = await response.json();
 
+    if (pack.format !== 'riffpack') {
+      throw new Error('Formato RiffPack non valido');
+    }
+
     state.pack = pack;
 
-    // Le battute arrivano dal RiffPack
-    lines = Array.isArray(pack.lines) ? pack.lines : [];
+    // Convertiamo gli oggetti RiffPack
+    // nel formato usato dal resto dell'app:
+    // [speaker, text, originalLine]
+    lines = Array.isArray(pack.lines)
+      ? pack.lines.map(line => [
+          line.speaker || 'VOCE',
+          line.text || '',
+          line
+        ])
+      : [];
 
     console.log('📦 RiffPack:', pack);
+    console.log('🗣️ Battute caricate:', lines);
 
-    // 2. Recupera il video
+    // ─────────────────────────────
+    // 2. VIDEO CONDIVISO
+    // ─────────────────────────────
+
     const video = $('#clip-video');
 
     if (!video) {
-      throw new Error('Elemento #clip-video non trovato');
+      throw new Error(
+        'Elemento #clip-video non trovato'
+      );
     }
 
-    // Pulizia completa del video precedente
+    // Stop del video precedente
     video.pause();
+
+    // Eliminiamo qualsiasi vecchio source
     video.removeAttribute('src');
+
     video.load();
 
     // IMPORTANTE:
-    // usiamo SOLO l'URL della scena dal server.
-    // NON usiamo pack.originalVideo o pack.silentVideo.
+    // il video viene SEMPRE dalla scena.
+    // Non usiamo:
+    // pack.originalVideo
+    // pack.silentVideo
+    // localClipUrl
     video.src = scene.video;
 
     video.muted = true;
     video.defaultMuted = true;
     video.loop = true;
     video.playsInline = true;
+    video.setAttribute('playsinline', '');
+    video.preload = 'auto';
     video.hidden = false;
 
-    console.log('🎥 video.src impostato a:', video.src);
+    styleClipVideo(video);
 
-    // 3. Quando il video è pronto
-    video.addEventListener('loadedmetadata', () => {
-      console.log('✅ VIDEO CARICATO');
-      console.log('   src:', video.currentSrc);
-      console.log('   durata:', video.duration);
+    console.log(
+      '🎥 video.src impostato a:',
+      video.src
+    );
 
-      video.currentTime = 0;
-    }, { once: true });
+    // ─────────────────────────────
+    // 3. EVENTI VIDEO
+    // ─────────────────────────────
 
-    video.addEventListener('canplay', () => {
-      console.log('▶️ VIDEO PRONTO ALLA RIPRODUZIONE');
-    }, { once: true });
+    video.addEventListener(
+      'loadedmetadata',
+      () => {
+        console.log('✅ VIDEO CARICATO');
+        console.log(
+          '   src:',
+          video.currentSrc
+        );
+        console.log(
+          '   durata:',
+          video.duration
+        );
+        console.log(
+          '   readyState:',
+          video.readyState
+        );
 
-    // 4. Gestione errori video
-    video.addEventListener('error', () => {
-      console.error('❌ ERRORE VIDEO');
-      console.error('src:', video.src);
-      console.error('currentSrc:', video.currentSrc);
-      console.error('error:', video.error);
+        video.currentTime = 0;
+      },
+      { once: true }
+    );
 
-      toast('Impossibile caricare il video della scena');
-    }, { once: true });
+    video.addEventListener(
+      'canplay',
+      () => {
+        console.log(
+          '▶️ VIDEO PRONTO ALLA RIPRODUZIONE'
+        );
+
+        console.log(
+          '   currentSrc:',
+          video.currentSrc
+        );
+
+        console.log(
+          '   readyState:',
+          video.readyState
+        );
+      },
+      { once: true }
+    );
+
+    video.addEventListener(
+      'error',
+      () => {
+        console.error('❌ ERRORE VIDEO');
+        console.error(
+          'src:',
+          video.src
+        );
+        console.error(
+          'currentSrc:',
+          video.currentSrc
+        );
+        console.error(
+          'error:',
+          video.error
+        );
+      },
+      { once: true }
+    );
 
     // Avvia il caricamento
     video.load();
 
-    // Mostra il badge "video originale silenziato"
     if ($('#clip-muted-badge')) {
       $('#clip-muted-badge').hidden = false;
     }
 
-    // 5. Aggiorna le battute
+    if ($('#record-title')) {
+      $('#record-title').textContent =
+        scene.title || pack.title || 'Dub Together';
+    }
+
     renderLines();
     updateLine();
+    renderWaveform();
 
-    console.log('🎬 Scena pronta:', scene.title);
+    console.log(
+      '🎬 Scena pronta:',
+      scene.title
+    );
+
+    return true;
 
   } catch (error) {
-    console.error('❌ Errore caricamento scena:', error);
-    toast('Impossibile caricare la scena');
+    console.error(
+      '❌ Errore caricamento scena:',
+      error
+    );
+
+    toast(
+      'Impossibile caricare la scena'
+    );
+
+    return false;
   }
 }
 
@@ -431,7 +587,8 @@ function handleResults(data) {
   const winner = ranking[0];
 
   if ($('#winner-name')) {
-    $('#winner-name').textContent = winner.name;
+    $('#winner-name').textContent =
+      winner.name;
   }
 
   go('results');
@@ -443,7 +600,8 @@ function syncLobbyControls() {
     !!state.hostId &&
     state.playerId === state.hostId;
 
-  const startButton = $('#start-round');
+  const startButton =
+    $('#start-round');
 
   if (!startButton) {
     return;
@@ -488,7 +646,11 @@ function toast(message) {
   }, 2300);
 }
 
-function setSelected(selector, attr, value) {
+function setSelected(
+  selector,
+  attr,
+  value
+) {
   $$(selector).forEach(el => {
     el.classList.toggle(
       'selected',
@@ -504,19 +666,25 @@ function renderPlayers() {
     document.querySelector('[data-players]');
 
   if (!container) {
-    console.warn('Container giocatori non trovato');
+    console.warn(
+      'Container giocatori non trovato'
+    );
     return;
   }
 
   container.innerHTML = '';
 
   state.players.forEach(player => {
-    const card = document.createElement('div');
+    const card =
+      document.createElement('div');
 
-    card.className = 'player-card';
+    card.className =
+      'player-card';
 
     if (player.id === state.playerId) {
-      card.classList.add('player-me');
+      card.classList.add(
+        'player-me'
+      );
     }
 
     card.innerHTML = `
@@ -528,11 +696,17 @@ function renderPlayers() {
       </div>
       <div class="player-info">
         <strong>${escapeHtml(player.name)}</strong>
-        ${player.host ? '<span class="player-host">HOST</span>' : ''}
+        ${
+          player.host
+            ? '<span class="player-host">HOST</span>'
+            : ''
+        }
       </div>
       <div class="player-status">
         <span class="status-dot-small ${
-          player.connected ? 'online' : 'offline'
+          player.connected
+            ? 'online'
+            : 'offline'
         }"></span>
       </div>
     `;
@@ -540,51 +714,86 @@ function renderPlayers() {
     container.appendChild(card);
   });
 
+  const count =
+    $('#player-count');
+
+  if (count) {
+    count.textContent =
+      state.players.length;
+  }
+
   syncLobbyControls();
 }
 
 function escapeHtml(value) {
   return String(value)
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#039;');
+    .replaceAll(
+      '&',
+      '&amp;'
+    )
+    .replaceAll(
+      '<',
+      '&lt;'
+    )
+    .replaceAll(
+      '>',
+      '&gt;'
+    )
+    .replaceAll(
+      '"',
+      '&quot;'
+    )
+    .replaceAll(
+      "'",
+      '&#039;'
+    );
 }
 
 function renderLines() {
-  const list = $('#line-list');
+  const list =
+    $('#line-list');
 
   if (!list) {
     return;
   }
 
-  list.innerHTML = lines.map((line, index) => `
-    <button
-      class="line-item ${
-        index === state.line ? 'active' : ''
-      } ${
-        state.recordings[index] ? 'done' : ''
-      }"
-      data-line="${index}"
-    >
-      <span class="line-number">
-        ${
+  list.innerHTML =
+    lines.map((line, index) => `
+      <button
+        type="button"
+        class="line-item ${
+          index === state.line
+            ? 'active'
+            : ''
+        } ${
           state.recordings[index]
-            ? '✓'
-            : `0${index + 1}`
-        }
-      </span>
-      <span>${line[1]}</span>
-    </button>
-  `).join('');
+            ? 'done'
+            : ''
+        }"
+        data-line="${index}"
+      >
+        <span class="line-number">
+          ${
+            state.recordings[index]
+              ? '✓'
+              : String(index + 1).padStart(2, '0')
+          }
+        </span>
+        <span>${escapeHtml(line[1])}</span>
+      </button>
+    `).join('');
 
   $$('.line-item').forEach(el => {
-    el.addEventListener('click', () => {
-      state.line = Number(el.dataset.line);
-      renderLines();
-      updateLine();
-    });
+    el.addEventListener(
+      'click',
+      () => {
+        state.line =
+          Number(el.dataset.line);
+
+        renderLines();
+        updateLine();
+      }
+    );
   });
 
   if ($('#line-count')) {
@@ -626,174 +835,259 @@ function startTimer() {
   state.seconds = 60;
 
   if ($('#round-timer')) {
-    $('#round-timer').textContent = '01:00';
+    $('#round-timer').textContent =
+      '01:00';
   }
 
-  state.timer = setInterval(() => {
-    state.seconds--;
+  state.timer =
+    setInterval(() => {
+      state.seconds--;
 
-    const minutes = String(
-      Math.floor(state.seconds / 60)
-    ).padStart(2, '0');
+      const minutes =
+        String(
+          Math.floor(
+            state.seconds / 60
+          )
+        ).padStart(2, '0');
 
-    const seconds = String(
-      state.seconds % 60
-    ).padStart(2, '0');
+      const seconds =
+        String(
+          state.seconds % 60
+        ).padStart(2, '0');
 
-    if ($('#round-timer')) {
-      $('#round-timer').textContent =
-        `${minutes}:${seconds}`;
-    }
+      if ($('#round-timer')) {
+        $('#round-timer').textContent =
+          `${minutes}:${seconds}`;
+      }
 
-    if (state.seconds <= 0) {
-      clearInterval(state.timer);
-      toast('Tempo scaduto: si va al playback!');
-      finishRecording();
-    }
-  }, 1000);
+      if (state.seconds <= 0) {
+        clearInterval(
+          state.timer
+        );
+
+        toast(
+          'Tempo scaduto: si va al playback!'
+        );
+
+        finishRecording();
+      }
+    }, 1000);
 }
 
 function renderVotes() {
-  const container = $('#vote-options');
+  const container =
+    $('#vote-options');
 
   if (!container) {
     return;
   }
 
-  const players = state.players;
+  const players =
+    state.players;
 
-  container.innerHTML = players.map((player, index) => `
-    <label class="vote-option ${
-      index === 0 ? 'selected' : ''
-    }">
-      <input
-        type="radio"
-        name="vote"
-        value="${player.id}"
-        ${index === 0 ? 'checked' : ''}
-      />
-      <span>
-        ${escapeHtml(player.name)}
-        ${index === 0 ? ' · la tua versione' : ''}
-      </span>
-    </label>
-  `).join('');
+  container.innerHTML =
+    players.map((player, index) => `
+      <label class="vote-option ${
+        index === 0
+          ? 'selected'
+          : ''
+      }">
+        <input
+          type="radio"
+          name="vote"
+          value="${escapeHtml(player.id)}"
+          ${
+            index === 0
+              ? 'checked'
+              : ''
+          }
+        />
+        <span>
+          ${escapeHtml(player.name)}
+          ${
+            index === 0
+              ? ' · la tua versione'
+              : ''
+          }
+        </span>
+      </label>
+    `).join('');
 
   $$('.vote-option').forEach(el => {
-    el.addEventListener('click', () => {
-      $$('.vote-option').forEach(v =>
-        v.classList.remove('selected')
-      );
+    el.addEventListener(
+      'click',
+      () => {
+        $$('.vote-option').forEach(v =>
+          v.classList.remove(
+            'selected'
+          )
+        );
 
-      el.classList.add('selected');
-    });
+        el.classList.add(
+          'selected'
+        );
+      }
+    );
   });
 
   if ($('#take-total')) {
     $('#take-total').textContent =
-      Math.max(players.length, 1);
+      Math.max(
+        players.length,
+        1
+      );
   }
 }
 
 $$('[data-go]').forEach(el => {
-  el.addEventListener('click', () => {
-    go(el.dataset.go);
-  });
+  el.addEventListener(
+    'click',
+    () => {
+      go(el.dataset.go);
+    }
+  );
 });
 
 $$('.mode-option').forEach(el => {
-  el.addEventListener('click', () => {
-    state.mode = el.dataset.mode;
+  el.addEventListener(
+    'click',
+    () => {
+      state.mode =
+        el.dataset.mode;
 
-    setSelected(
-      '.mode-option',
-      'mode',
-      state.mode
-    );
+      setSelected(
+        '.mode-option',
+        'mode',
+        state.mode
+      );
 
-    if (state.playerId === state.hostId) {
-      send('SET_MODE', {
-        mode: state.mode
-      });
+      if (
+        state.playerId ===
+        state.hostId
+      ) {
+        send(
+          'SET_MODE',
+          {
+            mode: state.mode
+          }
+        );
+      }
     }
-  });
-});
-
-$('#create-room')?.addEventListener('click', async () => {
-  const name =
-    $('#host-name')?.value.trim() || 'Host';
-
-  const success = await send('CREATE_ROOM', {
-    name,
-    mode: state.mode,
-    scene: state.scene
-  });
-
-  if (!success) {
-    toast('Impossibile creare la stanza');
-  }
-});
-
-$('#join-room')?.addEventListener('click', async () => {
-  const name =
-    $('#join-name')?.value.trim() ||
-    'Voce Misteriosa';
-
-  const rawCode =
-    $('#room-code')?.value || '';
-
-  const roomCode =
-    normalizeRoomCode(rawCode);
-
-  if (!roomCode) {
-    toast('Inserisci il codice della stanza');
-    return;
-  }
-
-  if (roomCode.length !== 6) {
-    toast('Il codice deve avere 6 caratteri');
-    return;
-  }
-
-  console.log(
-    '🚪 Tentativo ingresso stanza:',
-    rawCode,
-    '→',
-    roomCode,
-    'lunghezza:',
-    roomCode.length
   );
-
-  const success = await send('JOIN_ROOM', {
-    name,
-    roomCode
-  });
-
-  if (!success) {
-    toast('Impossibile contattare il server');
-  }
 });
 
-$('#copy-code')?.addEventListener('click', async () => {
-  try {
-    await navigator.clipboard.writeText(
-      state.room
+$('#create-room')?.addEventListener(
+  'click',
+  async () => {
+    const name =
+      $('#host-name')?.value.trim() ||
+      'Host';
+
+    const success =
+      await send(
+        'CREATE_ROOM',
+        {
+          name,
+          mode: state.mode,
+          scene: state.scene
+        }
+      );
+
+    if (!success) {
+      toast(
+        'Impossibile creare la stanza'
+      );
+    }
+  }
+);
+
+$('#join-room')?.addEventListener(
+  'click',
+  async () => {
+    const name =
+      $('#join-name')?.value.trim() ||
+      'Voce Misteriosa';
+
+    const rawCode =
+      $('#room-code')?.value ||
+      '';
+
+    const roomCode =
+      normalizeRoomCode(
+        rawCode
+      );
+
+    if (!roomCode) {
+      toast(
+        'Inserisci il codice della stanza'
+      );
+      return;
+    }
+
+    if (roomCode.length !== 6) {
+      toast(
+        'Il codice deve avere 6 caratteri'
+      );
+      return;
+    }
+
+    console.log(
+      '🚪 Tentativo ingresso stanza:',
+      rawCode,
+      '→',
+      roomCode,
+      'lunghezza:',
+      roomCode.length
     );
-  } catch {}
 
-  toast(
-    `Codice ${state.room} copiato!`
-  );
-});
+    const success =
+      await send(
+        'JOIN_ROOM',
+        {
+          name,
+          roomCode
+        }
+      );
 
-$('#start-round')?.addEventListener('click', () => {
-  if (state.playerId !== state.hostId) {
-    toast('Solo l’host può iniziare la partita');
-    return;
+    if (!success) {
+      toast(
+        'Impossibile contattare il server'
+      );
+    }
   }
+);
 
-  send('START_ROUND');
-});
+$('#copy-code')?.addEventListener(
+  'click',
+  async () => {
+    try {
+      await navigator.clipboard.writeText(
+        state.room
+      );
+    } catch {}
+
+    toast(
+      `Codice ${state.room} copiato!`
+    );
+  }
+);
+
+$('#start-round')?.addEventListener(
+  'click',
+  () => {
+    if (
+      state.playerId !==
+      state.hostId
+    ) {
+      toast(
+        'Solo l’host può iniziare la partita'
+      );
+      return;
+    }
+
+    send('START_ROUND');
+  }
+);
 
 async function beginRecording() {
   if (
@@ -803,10 +1097,14 @@ async function beginRecording() {
     return;
   }
 
-  state.recordingRequest = true;
+  state.recordingRequest =
+    true;
+
   state.chunks = [];
 
-  $('#record-button')?.classList.add('recording');
+  $('#record-button')?.classList.add(
+    'recording'
+  );
 
   if ($('#record-label')) {
     $('#record-label').textContent =
@@ -822,7 +1120,9 @@ async function beginRecording() {
     !navigator.mediaDevices?.getUserMedia ||
     !window.MediaRecorder
   ) {
-    state.recordingRequest = false;
+    state.recordingRequest =
+      false;
+
     state.recorder = {
       simulated: true
     };
@@ -841,7 +1141,8 @@ async function beginRecording() {
         audio: true
       });
 
-    state.recordingRequest = false;
+    state.recordingRequest =
+      false;
 
     state.recorder =
       new MediaRecorder(stream);
@@ -849,7 +1150,9 @@ async function beginRecording() {
     state.recorder.ondataavailable =
       event => {
         if (event.data.size) {
-          state.chunks.push(event.data);
+          state.chunks.push(
+            event.data
+          );
         }
       };
 
@@ -858,17 +1161,23 @@ async function beginRecording() {
         state.recorder?.mimeType ||
         'audio/webm';
 
-      state.recordings[state.line] =
-        URL.createObjectURL(
-          new Blob(
-            state.chunks,
-            { type: mimeType }
-          )
-        );
+      state.recordings[
+        state.line
+      ] = URL.createObjectURL(
+        new Blob(
+          state.chunks,
+          {
+            type: mimeType
+          }
+        )
+      );
 
       stream
         .getTracks()
-        .forEach(track => track.stop());
+        .forEach(
+          track =>
+            track.stop()
+        );
 
       state.recorder = null;
 
@@ -884,7 +1193,9 @@ async function beginRecording() {
   } catch (error) {
     console.error(error);
 
-    state.recordingRequest = false;
+    state.recordingRequest =
+      false;
+
     state.recorder = null;
 
     $('#record-button')?.classList.remove(
@@ -940,7 +1251,10 @@ function stopRecording() {
     state.recorder.stop();
   } else {
     state.recorder = null;
-    state.recordings[state.line] = true;
+    state.recordings[
+      state.line
+    ] = true;
+
     afterLine();
   }
 }
@@ -949,7 +1263,10 @@ function afterLine() {
   renderLines();
   updateLine();
 
-  if (state.line < lines.length - 1) {
+  if (
+    state.line <
+    lines.length - 1
+  ) {
     state.line++;
 
     renderLines();
@@ -989,17 +1306,22 @@ $('#finish-recording')?.addEventListener(
 );
 
 function finishRecording() {
-  clearInterval(state.timer);
+  clearInterval(
+    state.timer
+  );
 
   renderVotes();
 
   if ($('#take-index')) {
-    $('#take-index').textContent = '1';
+    $('#take-index').textContent =
+      '1';
   }
 
   const player =
     state.players.find(
-      p => p.id === state.playerId
+      p =>
+        p.id ===
+        state.playerId
     );
 
   const playerName =
@@ -1031,7 +1353,11 @@ $('#effect-button')?.addEventListener(
 
     state.effect =
       effects[
-        (effects.indexOf(state.effect) + 1) %
+        (
+          effects.indexOf(
+            state.effect
+          ) + 1
+        ) %
         effects.length
       ];
 
@@ -1047,9 +1373,27 @@ $('#effect-button')?.addEventListener(
 $('#replay-line')?.addEventListener(
   'click',
   () => {
-    toast(
-      'La scena riparte… immagina il silenzio drammatico.'
-    );
+    const video =
+      $('#clip-video');
+
+    if (!video) {
+      toast(
+        'Video della scena non disponibile'
+      );
+      return;
+    }
+
+    video.currentTime = 0;
+    video.muted = false;
+
+    video
+      .play()
+      .catch(error => {
+        console.error(
+          'Errore replay:',
+          error
+        );
+      });
   }
 );
 
@@ -1067,7 +1411,10 @@ $('#next-take')?.addEventListener(
 
     if (
       state.take >
-      Math.max(state.players.length, 1)
+      Math.max(
+        state.players.length,
+        1
+      )
     ) {
       state.take = 1;
     }
@@ -1078,7 +1425,9 @@ $('#next-take')?.addEventListener(
     }
 
     const player =
-      state.players[state.take - 1];
+      state.players[
+        state.take - 1
+      ];
 
     if ($('#playback-badge')) {
       $('#playback-badge').textContent =
@@ -1088,7 +1437,8 @@ $('#next-take')?.addEventListener(
     }
 
     if ($('#track-fill')) {
-      $('#track-fill').style.width = '0%';
+      $('#track-fill').style.width =
+        '0%';
     }
   }
 );
@@ -1102,21 +1452,29 @@ $('#submit-vote')?.addEventListener(
       );
 
     if (!selected) {
-      toast('Seleziona una take');
+      toast(
+        'Seleziona una take'
+      );
       return;
     }
 
-    send('SUBMIT_VOTE', {
-      votedFor: selected.value
-    });
+    send(
+      'SUBMIT_VOTE',
+      {
+        votedFor:
+          selected.value
+      }
+    );
 
-    toast('Voto registrato!');
+    toast(
+      'Voto registrato!'
+    );
   }
 );
 
 $('#play-again')?.addEventListener(
   'click',
-  () => {
+  async () => {
     state.take = 1;
     state.line = 0;
     state.recordings = {};
@@ -1125,63 +1483,40 @@ $('#play-again')?.addEventListener(
     updateLine();
 
     go('record');
+
+    await loadSharedScene();
+
     setPhase('listen');
   }
 );
 
-let localClipUrl = null;
-
-$('#clip-input')?.addEventListener(
-  'change',
-  event => {
-    const file =
-      event.target.files?.[0];
-
-    if (!file) {
-      return;
-    }
-
-    if (
-      file.type.startsWith('video/')
-    ) {
-      if (localClipUrl) {
-        URL.revokeObjectURL(
-          localClipUrl
-        );
-      }
-
-      localClipUrl =
-        URL.createObjectURL(file);
-
-      const video =
-        $('#clip-video');
-
-      if (video) {
-        video.src = localClipUrl;
-        video.muted = true;
-        styleClipVideo(video);
-      }
-
-      if ($('#clip-muted-badge')) {
-        $('#clip-muted-badge').hidden =
-          false;
-      }
-
-      toast(
-        `${file.name} pronto: voce originale silenziata`
-      );
-    }
-  }
-);
-
-if ($('#clip-input')) {
-  $('#clip-input').accept =
-    'video/*,.json,.riffpack,.riffpack.json';
-}
-
 function styleClipVideo(video) {
-  video.style.cssText =
-    'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:1;display:block';
+  video.style.position =
+    'absolute';
+
+  video.style.inset =
+    '0';
+
+  video.style.width =
+    '100%';
+
+  video.style.height =
+    '100%';
+
+  video.style.objectFit =
+    'cover';
+
+  video.style.zIndex =
+    '1';
+
+  video.style.display =
+    'block';
+
+  video.style.visibility =
+    'visible';
+
+  video.style.opacity =
+    '1';
 }
 
 const phaseStyle =
@@ -1258,21 +1593,24 @@ phaseCard.className =
   'phase-card';
 
 phaseCard.innerHTML = `
-<strong id="phase-title">
-  prima ascolta la scena originale
-</strong>
-<small id="phase-help">
-  Ascolta il ritmo, le pause e l’intenzione della battuta.
-</small>
-<div id="waveform" aria-label="waveform della voce originale"></div>
-<div class="phase-actions">
-  <button id="listen-original">
-    ▶ ascolta originale
-  </button>
-  <button id="enter-recording" disabled>
-    vai alla rec →
-  </button>
-</div>
+  <strong id="phase-title">
+    prima ascolta la scena originale
+  </strong>
+  <small id="phase-help">
+    Ascolta il ritmo, le pause e l’intenzione della battuta.
+  </small>
+  <div
+    id="waveform"
+    aria-label="waveform della voce originale"
+  ></div>
+  <div class="phase-actions">
+    <button id="listen-original">
+      ▶ ascolta originale
+    </button>
+    <button id="enter-recording" disabled>
+      vai alla rec →
+    </button>
+  </div>
 `;
 
 $('.record-panel')?.insertBefore(
@@ -1287,7 +1625,8 @@ const recordButton =
   $('#record-button');
 
 function setPhase(phase) {
-  state.phase = phase;
+  state.phase =
+    phase;
 
   const listening =
     phase === 'listen';
@@ -1320,85 +1659,176 @@ function setPhase(phase) {
     recordButton.disabled =
       listening;
   }
+
+  // Quando entri nella fase di ascolto,
+  // il video deve essere disponibile
+  // ma non deve partire automaticamente.
+  if (listening && clipVideo) {
+    clipVideo.pause();
+    clipVideo.currentTime = 0;
+    clipVideo.muted = true;
+  }
+
+  // Quando entri nella fase REC,
+  // il video continua ma senza audio.
+  if (
+    phase === 'record' &&
+    clipVideo
+  ) {
+    clipVideo.muted = true;
+
+    if (clipVideo.paused) {
+      clipVideo
+        .play()
+        .catch(error => {
+          console.warn(
+            'Autoplay REC bloccato:',
+            error
+          );
+        });
+    }
+  }
 }
 
 function renderWaveform() {
-  if (!$('#waveform')) {
+  const waveform =
+    $('#waveform');
+
+  if (!waveform) {
     return;
   }
 
+  const originalLine =
+    lines[state.line]?.[2];
+
   const values =
-    lines[state.line]?.[2]?.waveform ||
+    originalLine?.waveform ||
     [
-      0.18, 0.35, 0.52, 0.68,
-      0.4, 0.75, 0.3, 0.58,
-      0.42, 0.22, 0.62, 0.34,
-      0.7, 0.4, 0.24, 0.5
+      0.18,
+      0.35,
+      0.52,
+      0.68,
+      0.4,
+      0.75,
+      0.3,
+      0.58,
+      0.42,
+      0.22,
+      0.62,
+      0.34,
+      0.7,
+      0.4,
+      0.24,
+      0.5
     ];
 
-  $('#waveform').innerHTML =
+  waveform.innerHTML =
     values.map(value => `
-      <i style="height:${Math.max(
-        12,
-        Math.round(value * 100)
-      )}%"></i>
+      <i
+        style="height:${Math.max(
+          12,
+          Math.round(
+            Number(value) * 100
+          )
+        )}%"
+      ></i>
     `).join('');
 }
 
-$('#listen-original')?.addEventListener('click', async () => {
-  const clipVideo = $('#clip-video');
+// UNICO listener per ascoltare la scena originale
+$('#listen-original')?.addEventListener(
+  'click',
+  async () => {
+    const video =
+      $('#clip-video');
 
-  if (!clipVideo || !state.sceneData?.video) {
-    if ($('#enter-recording')) {
-      $('#enter-recording').disabled = false;
+    if (
+      !video ||
+      !state.sceneData?.video
+    ) {
+      if ($('#enter-recording')) {
+        $('#enter-recording').disabled =
+          false;
+      }
+
+      toast(
+        'Video della scena non disponibile'
+      );
+
+      return;
     }
 
-    toast('Video della scena non disponibile');
-    return;
+    video.hidden = false;
+    video.muted = false;
+    video.defaultMuted = false;
+
+    styleClipVideo(video);
+
+    try {
+      video.currentTime = 0;
+
+      await video.play();
+
+      if ($('#mic-status')) {
+        $('#mic-status').textContent =
+          'stai ascoltando la voce originale';
+      }
+
+      if ($('#enter-recording')) {
+        $('#enter-recording').disabled =
+          false;
+      }
+
+      toast(
+        'Scena originale in riproduzione'
+      );
+    } catch (error) {
+      console.error(
+        'Errore riproduzione video:',
+        error
+      );
+
+      if ($('#enter-recording')) {
+        $('#enter-recording').disabled =
+          false;
+      }
+
+      toast(
+        'Impossibile riprodurre la scena'
+      );
+    }
   }
+);
 
-  clipVideo.hidden = false;
-  clipVideo.muted = false;
-  clipVideo.currentTime = 0;
-
-  try {
-    await clipVideo.play();
-
-    if ($('#mic-status')) {
-      $('#mic-status').textContent =
-        'stai ascoltando la voce originale';
-    }
-
-    if ($('#enter-recording')) {
-      $('#enter-recording').disabled = false;
-    }
-
-    toast('Scena originale in riproduzione');
-  } catch (error) {
-    console.error('Errore riproduzione video:', error);
-
-    if ($('#enter-recording')) {
-      $('#enter-recording').disabled = false;
-    }
-
-    toast('Impossibile riprodurre la scena');
-  }
-});
-
+// UNICO listener per entrare nella REC
 $('#enter-recording')?.addEventListener(
   'click',
-  () => {
-    if (localClipUrl && clipVideo) {
-      clipVideo.pause();
-      clipVideo.muted = true;
-      clipVideo.currentTime = 0;
+  async () => {
+    const video =
+      $('#clip-video');
 
-      clipVideo
-        .play()
-        .catch(() => {});
+    if (
+      !video ||
+      !state.sceneData?.video
+    ) {
+      toast(
+        'Video della scena non disponibile'
+      );
+      return;
     }
 
+    video.hidden = false;
+    video.muted = true;
+    video.defaultMuted = true;
+
+    styleClipVideo(video);
+
+    // Manteniamo il video originale,
+    // ma senza audio.
+    video.currentTime = 0;
+
     setPhase('record');
+
     startTimer();
 
     if ($('#mic-status')) {
@@ -1406,269 +1836,18 @@ $('#enter-recording')?.addEventListener(
         'video muto · microfono pronto';
     }
 
+    try {
+      await video.play();
+    } catch (error) {
+      console.warn(
+        'Riproduzione video in REC bloccata:',
+        error
+      );
+    }
+
     toast(
       'Ora registra seguendo la scena'
     );
-  }
-);
-
-async function makeDemoClip() {
-  if (
-    !window.MediaRecorder ||
-    !HTMLCanvasElement.prototype.captureStream
-  ) {
-    return null;
-  }
-
-  const canvas =
-    document.createElement('canvas');
-
-  canvas.width = 640;
-  canvas.height = 360;
-
-  const ctx =
-    canvas.getContext('2d');
-
-  const stream =
-    canvas.captureStream(24);
-
-  const chunks = [];
-
-  let frame = 0;
-  let raf;
-
-  const recorder =
-    new MediaRecorder(
-      stream,
-      { mimeType: 'video/webm' }
-    );
-
-  const draw = () => {
-    frame++;
-
-    ctx.fillStyle = '#9edcf0';
-    ctx.fillRect(
-      0, 0, 640, 360
-    );
-
-    ctx.fillStyle = '#e3ba76';
-    ctx.fillRect(
-      0, 245, 640, 115
-    );
-
-    ctx.fillStyle = '#ffd45c';
-    ctx.beginPath();
-    ctx.arc(
-      520,
-      75,
-      55,
-      0,
-      Math.PI * 2
-    );
-    ctx.fill();
-
-    ctx.fillStyle = '#56bde9';
-    ctx.fillRect(
-      185 + Math.sin(frame / 10) * 4,
-      125,
-      95,
-      120
-    );
-
-    ctx.fillStyle = '#ff6e63';
-    ctx.fillRect(
-      350 - Math.sin(frame / 10) * 4,
-      142,
-      95,
-      103
-    );
-
-    ctx.fillStyle = '#211b3d';
-    ctx.font = '800 25px Nunito';
-
-    ctx.fillText(
-      'RIFFPACK DEMO',
-      24,
-      42
-    );
-
-    if (frame < 72) {
-      raf =
-        requestAnimationFrame(draw);
-    } else {
-      recorder.stop();
-    }
-  };
-
-  return new Promise(resolve => {
-    recorder.ondataavailable =
-      event => {
-        if (event.data.size) {
-          chunks.push(event.data);
-        }
-      };
-
-    recorder.onstop = () => {
-      cancelAnimationFrame(raf);
-
-      stream
-        .getTracks()
-        .forEach(track => track.stop());
-
-      resolve(
-        URL.createObjectURL(
-          new Blob(
-            chunks,
-            { type: 'video/webm' }
-          )
-        )
-      );
-    };
-
-    recorder.start();
-    draw();
-  });
-}
-
-$('#clip-input')?.addEventListener(
-  'change',
-  async event => {
-    const file =
-      event.target.files?.[0];
-
-    if (
-      !file ||
-      !file.name.match(
-        /\.(json|riffpack)$/i
-      )
-    ) {
-      return;
-    }
-
-    try {
-      const pack =
-        JSON.parse(
-          await file.text()
-        );
-
-      if (
-        pack.format !== 'riffpack'
-      ) {
-        throw new Error(
-          'Formato non valido'
-        );
-      }
-
-      state.pack = pack;
-
-      if (
-        Array.isArray(pack.lines) &&
-        pack.lines.length
-      ) {
-        lines =
-          pack.lines.map(line => [
-            line.speaker || 'VOCE',
-            line.text || '',
-            line
-          ]);
-      }
-
-      const resolveMedia =
-        value =>
-          value?.startsWith('data:')
-            ? value
-            : new URL(
-                value,
-                document.baseURI
-              ).href;
-
-      if (pack.originalVideo) {
-        const candidateUrl =
-          resolveMedia(
-            pack.originalVideo
-          );
-
-        try {
-          const response =
-            await fetch(
-              candidateUrl,
-              { method: 'HEAD' }
-            );
-
-          localClipUrl =
-            response.ok
-              ? candidateUrl
-              : await makeDemoClip();
-        } catch {
-          localClipUrl =
-            await makeDemoClip();
-        }
-
-        if (
-          localClipUrl &&
-          clipVideo
-        ) {
-          styleClipVideo(
-            clipVideo
-          );
-
-          clipVideo.src =
-            localClipUrl;
-
-          clipVideo.muted = true;
-          clipVideo.hidden = false;
-        }
-      } else {
-        localClipUrl =
-          await makeDemoClip();
-
-        if (
-          localClipUrl &&
-          clipVideo
-        ) {
-          styleClipVideo(
-            clipVideo
-          );
-
-          clipVideo.src =
-            localClipUrl;
-
-          clipVideo.muted = true;
-          clipVideo.hidden = false;
-        }
-      }
-
-      state.silentClipUrl =
-        pack.silentVideo
-          ? resolveMedia(
-              pack.silentVideo
-            )
-          : null;
-
-      renderLines();
-      updateLine();
-      renderWaveform();
-
-      if ($('#record-title')) {
-        $('#record-title').textContent =
-          pack.title ||
-          'Scena dal pack';
-      }
-
-      toast(
-        `Pack “${
-          pack.title || file.name
-        }” caricato${
-          localClipUrl
-            ? ''
-            : ' · aggiungi i video del pack'
-        }`
-      );
-    } catch (error) {
-      toast(
-        `Pack non valido: ${error.message}`
-      );
-    }
   }
 );
 
@@ -1692,12 +1871,16 @@ function playRecordedDubs() {
   let index = 0;
 
   const playNext = () => {
-    if (index >= urls.length) {
+    if (
+      index >= urls.length
+    ) {
       return;
     }
 
     const audio =
-      new Audio(urls[index++]);
+      new Audio(
+        urls[index++]
+      );
 
     audio.onended =
       playNext;
@@ -1710,40 +1893,17 @@ function playRecordedDubs() {
   playNext();
 }
 
-if ($('#enter-recording')) {
-  $('#enter-recording')
-    .addEventListener(
-      'click',
-      () => {
-        if (
-          !state.silentClipUrl ||
-          !clipVideo
-        ) {
-          return;
-        }
-
-        clipVideo.pause();
-        clipVideo.src =
-          state.silentClipUrl;
-        clipVideo.muted = false;
-        clipVideo.currentTime = 0;
-
-        clipVideo
-          .play()
-          .catch(() => {});
-      }
-    );
-}
-
 renderPlayers();
 renderLines();
 updateLine();
 renderWaveform();
 updateConnectionStatus();
 
-connectSocket().catch(error => {
-  console.error(
-    'Connessione iniziale fallita:',
-    error
-  );
-});
+connectSocket().catch(
+  error => {
+    console.error(
+      'Connessione iniziale fallita:',
+      error
+    );
+  }
+);
