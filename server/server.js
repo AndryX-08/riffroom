@@ -8,8 +8,23 @@ const MAX_PLAYERS = 6;
 const rooms = new Map();
 const clients = new Map();
 
-const emojis = ['🦊', '🐙', '🐸', '🐼', '🐵', '🐯'];
-const colors = ['#ffd45c', '#bba7ff', '#a9e4bb', '#ff9f9f', '#7dd3fc', '#f9a8d4'];
+const emojis = [
+  '🦊',
+  '🐙',
+  '🐸',
+  '🐼',
+  '🐵',
+  '🐯'
+];
+
+const colors = [
+  '#ffd45c',
+  '#bba7ff',
+  '#a9e4bb',
+  '#ff9f9f',
+  '#7dd3fc',
+  '#f9a8d4'
+];
 
 const SCENES = {
   'generale-hartman': {
@@ -17,8 +32,10 @@ const SCENES = {
     title: 'Generale Hartman',
     category: 'commedia',
     duration: 28,
-    video: 'https://archive.org/download/generale-hartman_202609/original-video.mp4',
-    riffpack: 'https://archive.org/download/riffpack.generale-hartman/example.riffpack.json'
+    video:
+      'https://archive.org/download/generale-hartman_202609/original-video.mp4',
+    riffpack:
+      'https://archive.org/download/riffpack.generale-hartman/example.riffpack.json'
   }
 };
 
@@ -34,23 +51,44 @@ function normalizeRoomCode(value) {
 
 function generateRoomCode() {
   let code;
+
   do {
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    const raw = Array.from({ length: 6 }, () =>
-      chars[Math.floor(Math.random() * chars.length)]
+    const chars =
+      'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+    const raw = Array.from(
+      { length: 6 },
+      () =>
+        chars[
+          Math.floor(
+            Math.random() *
+              chars.length
+          )
+        ]
     );
-    code = `${raw.slice(0, 3).join('')}-${raw.slice(3).join('')}`;
+
+    code =
+      `${raw.slice(0, 3).join('')}-${raw.slice(3).join('')}`;
   } while (rooms.has(code));
+
   return code;
 }
 
 function getScene(sceneId) {
-  return SCENES[String(sceneId || '')] || null;
+  return (
+    SCENES[
+      String(sceneId || '')
+    ] || null
+  );
 }
 
 function serializeScene(sceneId) {
-  const scene = getScene(sceneId);
-  if (!scene) return null;
+  const scene =
+    getScene(sceneId);
+
+  if (!scene) {
+    return null;
+  }
 
   return {
     id: scene.id,
@@ -63,10 +101,17 @@ function serializeScene(sceneId) {
 }
 
 function findRoomByCode(value) {
-  const normalized = normalizeRoomCode(value);
+  const normalized =
+    normalizeRoomCode(value);
 
-  for (const [code, room] of rooms) {
-    if (normalizeRoomCode(code) === normalized) {
+  for (
+    const [code, room]
+    of rooms
+  ) {
+    if (
+      normalizeRoomCode(code) ===
+      normalized
+    ) {
       return room;
     }
   }
@@ -74,14 +119,39 @@ function findRoomByCode(value) {
   return null;
 }
 
-function send(ws, type, data = {}) {
-  if (!ws || ws.readyState !== 1) return;
-  ws.send(JSON.stringify({ type, ...data }));
+function send(
+  ws,
+  type,
+  data = {}
+) {
+  if (
+    !ws ||
+    ws.readyState !== 1
+  ) {
+    return;
+  }
+
+  ws.send(
+    JSON.stringify({
+      type,
+      ...data
+    })
+  );
 }
 
-function broadcast(room, type, data = {}) {
-  for (const player of room.players) {
-    send(player.ws, type, data);
+function broadcast(
+  room,
+  type,
+  data = {}
+) {
+  for (
+    const player of room.players
+  ) {
+    send(
+      player.ws,
+      type,
+      data
+    );
   }
 }
 
@@ -91,48 +161,107 @@ function serializeRoom(room) {
     hostId: room.hostId,
     mode: room.mode,
     scene: room.scene,
-    sceneData: serializeScene(room.scene),
+    sceneData:
+      serializeScene(
+        room.scene
+      ),
     phase: room.phase,
-    players: room.players.map(player => ({
-      id: player.id,
-      name: player.name,
-      emoji: player.emoji,
-      color: player.color,
-      host: player.id === room.hostId,
-      connected: player.ws.readyState === 1
-    }))
+    players:
+      room.players.map(
+        (player) => ({
+          id: player.id,
+          name: player.name,
+          emoji: player.emoji,
+          color: player.color,
+          host:
+            player.id ===
+            room.hostId,
+          connected:
+            player.ws.readyState ===
+            1
+        })
+      )
   };
 }
 
-function broadcastRoomState(room) {
-  broadcast(room, 'ROOM_STATE', serializeRoom(room));
+function broadcastRoomState(
+  room
+) {
+  broadcast(
+    room,
+    'ROOM_STATE',
+    serializeRoom(room)
+  );
 }
 
 function getRoomForSocket(ws) {
-  const client = clients.get(ws);
-  if (!client?.roomCode) return null;
-  return rooms.get(client.roomCode) || null;
+  const client =
+    clients.get(ws);
+
+  if (!client?.roomCode) {
+    return null;
+  }
+
+  return (
+    rooms.get(
+      client.roomCode
+    ) || null
+  );
 }
 
 function getPlayerForSocket(ws) {
-  const client = clients.get(ws);
-  if (!client) return null;
+  const client =
+    clients.get(ws);
 
-  const room = rooms.get(client.roomCode);
-  if (!room) return null;
+  if (!client) {
+    return null;
+  }
 
-  return room.players.find(player => player.id === client.playerId) || null;
+  const room =
+    rooms.get(
+      client.roomCode
+    );
+
+  if (!room) {
+    return null;
+  }
+
+  return (
+    room.players.find(
+      (player) =>
+        player.id ===
+        client.playerId
+    ) || null
+  );
 }
 
-function isHost(ws, room) {
-  const player = getPlayerForSocket(ws);
-  return !!player && player.id === room.hostId;
+function isHost(
+  ws,
+  room
+) {
+  const player =
+    getPlayerForSocket(ws);
+
+  return Boolean(
+    player &&
+    player.id ===
+      room.hostId
+  );
 }
 
-function createPlayer(name, ws) {
+function createPlayer(
+  name,
+  ws
+) {
   return {
     id: generateId(),
-    name: String(name || 'Giocatore').trim().slice(0, 30) || 'Giocatore',
+    name:
+      String(
+        name || 'Giocatore'
+      )
+        .trim()
+        .slice(0, 30) ||
+      'Giocatore',
     emoji: emojis[0],
     color: colors[0],
     ws,
@@ -141,193 +270,388 @@ function createPlayer(name, ws) {
   };
 }
 
-function handleCreateRoom(ws, data) {
+function handleCreateRoom(
+  ws,
+  data
+) {
   if (clients.has(ws)) {
     send(ws, 'ERROR', {
-      message: 'Questo client è già associato a una stanza.'
+      message:
+        'Questo client è già associato a una stanza.'
     });
+
     return;
   }
 
-  const name = String(data.name || 'Host').trim() || 'Host';
-  const requestedScene = String(data.scene || 'generale-hartman');
-  const scene = getScene(requestedScene);
+  const name =
+    String(
+      data.name || 'Host'
+    )
+      .trim()
+      .slice(0, 30) ||
+    'Host';
+
+  const requestedScene =
+    String(
+      data.scene ||
+        'generale-hartman'
+    );
+
+  const scene =
+    getScene(
+      requestedScene
+    );
 
   if (!scene) {
     send(ws, 'ERROR', {
-      message: 'La scena selezionata non è disponibile.'
+      message:
+        'La scena selezionata non è disponibile.'
     });
+
     return;
   }
 
-  const code = generateRoomCode();
-  const player = createPlayer(name, ws);
+  const code =
+    generateRoomCode();
+
+  const player =
+    createPlayer(
+      name,
+      ws
+    );
 
   const room = {
     code,
     hostId: player.id,
-    mode: data.mode === 'roles' ? 'roles' : 'parallel',
+    mode:
+      data.mode === 'roles'
+        ? 'roles'
+        : 'parallel',
     scene: scene.id,
     phase: 'LOBBY',
     players: [player],
     createdAt: Date.now()
   };
 
-  rooms.set(code, room);
+  rooms.set(
+    code,
+    room
+  );
+
   clients.set(ws, {
     roomCode: code,
     playerId: player.id
   });
 
-  send(ws, 'ROOM_CREATED', {
-    roomCode: code,
-    playerId: player.id,
-    hostId: player.id
-  });
+  send(
+    ws,
+    'ROOM_CREATED',
+    {
+      roomCode: code,
+      playerId: player.id,
+      hostId: player.id
+    }
+  );
 
-  broadcastRoomState(room);
+  broadcastRoomState(
+    room
+  );
 
-  console.log(`Room created: ${code} by ${name}`);
+  console.log(
+    `Room created: ${code} by ${name}`
+  );
 }
 
-function handleJoinRoom(ws, data) {
+function handleJoinRoom(
+  ws,
+  data
+) {
   if (clients.has(ws)) {
     send(ws, 'ERROR', {
-      message: 'Questo client è già associato a una stanza.'
+      message:
+        'Questo client è già associato a una stanza.'
     });
+
     return;
   }
 
-  const requestedCode = String(data.roomCode || '');
-  const normalizedCode = normalizeRoomCode(requestedCode);
-  const name = String(data.name || 'Giocatore').trim() || 'Giocatore';
+  const requestedCode =
+    String(
+      data.roomCode || ''
+    );
+
+  const normalizedCode =
+    normalizeRoomCode(
+      requestedCode
+    );
+
+  const name =
+    String(
+      data.name ||
+        'Giocatore'
+    )
+      .trim()
+      .slice(0, 30) ||
+    'Giocatore';
 
   console.log(
     `Join request: "${requestedCode}" -> "${normalizedCode}". Rooms:`,
     [...rooms.keys()]
   );
 
-  const room = findRoomByCode(normalizedCode);
+  const room =
+    findRoomByCode(
+      normalizedCode
+    );
 
   if (!room) {
     send(ws, 'ERROR', {
-      message: `Stanza non trovata. Codice ricevuto: ${requestedCode || '(vuoto)'}`
+      message:
+        `Stanza non trovata. Codice ricevuto: ${requestedCode || '(vuoto)'}`
     });
+
     return;
   }
 
-  if (room.phase !== 'LOBBY') {
+  if (
+    room.phase !==
+    'LOBBY'
+  ) {
     send(ws, 'ERROR', {
-      message: 'La partita è già iniziata.'
+      message:
+        'La partita è già iniziata.'
     });
+
     return;
   }
 
-  if (room.players.length >= MAX_PLAYERS) {
+  if (
+    room.players.length >=
+    MAX_PLAYERS
+  ) {
     send(ws, 'ERROR', {
-      message: 'La stanza è piena.'
+      message:
+        'La stanza è piena.'
     });
+
     return;
   }
 
-  const player = createPlayer(name, ws);
-  const index = room.players.length;
+  const player =
+    createPlayer(
+      name,
+      ws
+    );
 
-  player.emoji = emojis[index % emojis.length];
-  player.color = colors[index % colors.length];
+  const index =
+    room.players.length;
 
-  room.players.push(player);
+  player.emoji =
+    emojis[
+      index %
+        emojis.length
+    ];
+
+  player.color =
+    colors[
+      index %
+        colors.length
+    ];
+
+  room.players.push(
+    player
+  );
 
   clients.set(ws, {
     roomCode: room.code,
     playerId: player.id
   });
 
-  send(ws, 'ROOM_JOINED', {
-    roomCode: room.code,
-    playerId: player.id,
-    hostId: room.hostId
-  });
+  send(
+    ws,
+    'ROOM_JOINED',
+    {
+      roomCode: room.code,
+      playerId: player.id,
+      hostId: room.hostId
+    }
+  );
 
-  broadcastRoomState(room);
+  broadcastRoomState(
+    room
+  );
 
-  console.log(`${name} joined ${room.code}`);
+  console.log(
+    `${name} joined ${room.code}`
+  );
 }
 
-function handleSetMode(ws, data) {
-  const room = getRoomForSocket(ws);
+function handleSetMode(
+  ws,
+  data
+) {
+  const room =
+    getRoomForSocket(ws);
 
-  if (!room || !isHost(ws, room)) return;
-  if (room.phase !== 'LOBBY') return;
-
-  room.mode = data.mode === 'roles' ? 'roles' : 'parallel';
-
-  broadcastRoomState(room);
-}
-
-function handleSetScene(ws, data) {
-  const room = getRoomForSocket(ws);
-
-  if (!room || !isHost(ws, room)) return;
-  if (room.phase !== 'LOBBY') return;
-
-  const scene = getScene(data.scene);
-
-  if (!scene) {
-    send(ws, 'ERROR', {
-      message: 'La scena selezionata non è disponibile.'
-    });
+  if (
+    !room ||
+    !isHost(ws, room)
+  ) {
     return;
   }
 
-  room.scene = scene.id;
-
-  broadcastRoomState(room);
-
-  console.log(`Scene changed in ${room.code}: ${scene.id}`);
-}
-
-function handleStartRound(ws) {
-  const room = getRoomForSocket(ws);
-
-  if (!room || !isHost(ws, room)) return;
-  if (room.phase !== 'LOBBY') return;
-
-  const scene = getScene(room.scene);
-
-  if (!scene) {
-    send(ws, 'ERROR', {
-      message: 'La scena selezionata non è disponibile.'
-    });
+  if (
+    room.phase !==
+    'LOBBY'
+  ) {
     return;
   }
 
-  room.phase = 'LISTEN';
-  room.startedAt = Date.now();
+  room.mode =
+    data.mode === 'roles'
+      ? 'roles'
+      : 'parallel';
 
-  room.players.forEach(player => {
-    player.recordings = {};
-    player.votes = {};
-  });
+  broadcastRoomState(
+    room
+  );
 
-  broadcast(room, 'GAME_STARTED', {
-    roomCode: room.code,
-    mode: room.mode,
-    scene: room.scene,
-    sceneData: serializeScene(room.scene),
-    phase: room.phase,
-    startedAt: room.startedAt
-  });
-
-  broadcastRoomState(room);
-
-  console.log(`Game started: ${room.code}`);
+  console.log(
+    `Mode changed in ${room.code}: ${room.mode}`
+  );
 }
 
-function handlePhaseChange(ws, data) {
-  const room = getRoomForSocket(ws);
+function handleSetScene(
+  ws,
+  data
+) {
+  const room =
+    getRoomForSocket(ws);
 
-  if (!room || !isHost(ws, room)) return;
+  if (
+    !room ||
+    !isHost(ws, room)
+  ) {
+    return;
+  }
+
+  if (
+    room.phase !==
+    'LOBBY'
+  ) {
+    return;
+  }
+
+  const scene =
+    getScene(data.scene);
+
+  if (!scene) {
+    send(ws, 'ERROR', {
+      message:
+        'La scena selezionata non è disponibile.'
+    });
+
+    return;
+  }
+
+  room.scene =
+    scene.id;
+
+  broadcastRoomState(
+    room
+  );
+
+  console.log(
+    `Scene changed in ${room.code}: ${scene.id}`
+  );
+}
+
+function handleStartRound(
+  ws
+) {
+  const room =
+    getRoomForSocket(ws);
+
+  if (
+    !room ||
+    !isHost(ws, room)
+  ) {
+    return;
+  }
+
+  if (
+    room.phase !==
+    'LOBBY'
+  ) {
+    return;
+  }
+
+  const scene =
+    getScene(room.scene);
+
+  if (!scene) {
+    send(ws, 'ERROR', {
+      message:
+        'La scena selezionata non è disponibile.'
+    });
+
+    return;
+  }
+
+  room.phase =
+    'LISTEN';
+
+  room.startedAt =
+    Date.now();
+
+  room.players.forEach(
+    (player) => {
+      player.recordings =
+        {};
+      player.votes =
+        {};
+    }
+  );
+
+  broadcast(
+    room,
+    'GAME_STARTED',
+    {
+      roomCode: room.code,
+      mode: room.mode,
+      scene: room.scene,
+      sceneData:
+        serializeScene(
+          room.scene
+        ),
+      phase: room.phase,
+      startedAt:
+        room.startedAt
+    }
+  );
+
+  broadcastRoomState(
+    room
+  );
+
+  console.log(
+    `Game started: ${room.code}`
+  );
+}
+
+function handlePhaseChange(
+  ws,
+  data
+) {
+  const room =
+    getRoomForSocket(ws);
+
+  if (
+    !room ||
+    !isHost(ws, room)
+  ) {
+    return;
+  }
 
   const allowed = [
     'LISTEN',
@@ -337,31 +661,73 @@ function handlePhaseChange(ws, data) {
     'RESULTS'
   ];
 
-  if (!allowed.includes(data.phase)) return;
+  if (
+    !allowed.includes(
+      data.phase
+    )
+  ) {
+    return;
+  }
 
-  room.phase = data.phase;
+  room.phase =
+    data.phase;
 
-  broadcast(room, 'PHASE_CHANGED', {
-    phase: room.phase
-  });
+  broadcast(
+    room,
+    'PHASE_CHANGED',
+    {
+      phase:
+        room.phase
+    }
+  );
 
-  broadcastRoomState(room);
+  broadcastRoomState(
+    room
+  );
 }
 
-function handleVote(ws, data) {
-  const room = getRoomForSocket(ws);
-  const player = getPlayerForSocket(ws);
+function handleVote(
+  ws,
+  data
+) {
+  const room =
+    getRoomForSocket(ws);
 
-  if (!room || !player) return;
-  if (room.phase !== 'VOTING') return;
+  const player =
+    getPlayerForSocket(ws);
 
-  const votedFor = String(data.votedFor || '');
-  const target = room.players.find(p => p.id === votedFor);
+  if (
+    !room ||
+    !player
+  ) {
+    return;
+  }
+
+  if (
+    room.phase !==
+    'VOTING'
+  ) {
+    return;
+  }
+
+  const votedFor =
+    String(
+      data.votedFor || ''
+    );
+
+  const target =
+    room.players.find(
+      (p) =>
+        p.id ===
+        votedFor
+    );
 
   if (!target) {
     send(ws, 'ERROR', {
-      message: 'Giocatore non valido.'
+      message:
+        'Giocatore non valido.'
     });
+
     return;
   }
 
@@ -371,186 +737,348 @@ function handleVote(ws, data) {
 
   const results = {};
 
-  for (const p of room.players) {
-    results[p.id] = 0;
-  }
-
-  for (const p of room.players) {
-    if (
-      p.votes?.votedFor &&
-      results[p.votes.votedFor] !== undefined
-    ) {
-      results[p.votes.votedFor]++;
+  room.players.forEach(
+    (p) => {
+      results[p.id] =
+        0;
     }
-  }
-
-  broadcast(room, 'VOTE_UPDATE', {
-    results
-  });
-
-  const allVoted = room.players.every(
-    p => p.votes?.votedFor
   );
 
-  if (allVoted) {
-    room.phase = 'RESULTS';
+  room.players.forEach(
+    (p) => {
+      const vote =
+        p.votes?.votedFor;
 
-    const ranking = room.players
-      .map(player => ({
+      if (
+        vote &&
+        results[vote] !==
+          undefined
+      ) {
+        results[vote]++;
+      }
+    }
+  );
+
+  broadcast(
+    room,
+    'VOTE_UPDATE',
+    {
+      results
+    }
+  );
+
+  const allVoted =
+    room.players.every(
+      (p) =>
+        p.votes?.votedFor
+    );
+
+  if (!allVoted) {
+    return;
+  }
+
+  room.phase =
+    'RESULTS';
+
+  const ranking =
+    room.players
+      .map((player) => ({
         id: player.id,
         name: player.name,
         emoji: player.emoji,
         color: player.color,
-        votes: results[player.id] || 0
+        votes:
+          results[
+            player.id
+          ] || 0
       }))
-      .sort((a, b) => b.votes - a.votes);
+      .sort(
+        (a, b) =>
+          b.votes -
+          a.votes
+      );
 
-    broadcast(room, 'RESULTS', {
+  broadcast(
+    room,
+    'RESULTS',
+    {
       ranking
-    });
+    }
+  );
 
-    broadcastRoomState(room);
-  }
+  broadcastRoomState(
+    room
+  );
 }
 
 function handlePing(ws) {
-  send(ws, 'PONG', {
-    time: Date.now()
-  });
+  send(
+    ws,
+    'PONG',
+    {
+      time: Date.now()
+    }
+  );
 }
 
-const server = http.createServer((req, res) => {
-  if (req.url === '/health') {
-    res.writeHead(200, {
-      'Content-Type': 'application/json'
-    });
+const server =
+  http.createServer(
+    (req, res) => {
+      if (
+        req.url ===
+        '/health'
+      ) {
+        res.writeHead(
+          200,
+          {
+            'Content-Type':
+              'application/json'
+          }
+        );
 
-    res.end(JSON.stringify({
-      status: 'ok',
-      service: 'dub-together-server',
-      rooms: rooms.size,
-      scenes: Object.keys(SCENES).length
-    }));
+        res.end(
+          JSON.stringify({
+            status: 'ok',
+            service:
+              'dub-together-server',
+            rooms:
+              rooms.size,
+            scenes:
+              Object.keys(
+                SCENES
+              ).length
+          })
+        );
 
-    return;
-  }
-
-  res.writeHead(200, {
-    'Content-Type': 'text/plain'
-  });
-
-  res.end('Dub Together server is running');
-});
-
-const wss = new WebSocketServer({
-  server
-});
-
-wss.on('connection', ws => {
-  console.log('Client connected');
-
-  send(ws, 'CONNECTED', {
-    message: 'Connected to Dub Together server'
-  });
-
-  send(ws, 'SCENE_LIBRARY', {
-    scenes: Object.values(SCENES)
-  });
-
-  ws.on('message', message => {
-    try {
-      const data = JSON.parse(message.toString());
-
-      console.log('WS message:', data.type, data);
-
-      switch (data.type) {
-        case 'CREATE_ROOM':
-          handleCreateRoom(ws, data);
-          break;
-
-        case 'JOIN_ROOM':
-          handleJoinRoom(ws, data);
-          break;
-
-        case 'SET_MODE':
-          handleSetMode(ws, data);
-          break;
-
-        case 'SET_SCENE':
-          handleSetScene(ws, data);
-          break;
-
-        case 'START_ROUND':
-          handleStartRound(ws);
-          break;
-
-        case 'SET_PHASE':
-          handlePhaseChange(ws, data);
-          break;
-
-        case 'SUBMIT_VOTE':
-          handleVote(ws, data);
-          break;
-
-        case 'PING':
-          handlePing(ws);
-          break;
-
-        default:
-          send(ws, 'ERROR', {
-            message: `Evento sconosciuto: ${data.type}`
-          });
+        return;
       }
-    } catch (error) {
-      console.error('Message error:', error);
 
-      send(ws, 'ERROR', {
-        message: 'Messaggio non valido.'
-      });
+      res.writeHead(
+        200,
+        {
+          'Content-Type':
+            'text/plain'
+        }
+      );
+
+      res.end(
+        'Dub Together server is running'
+      );
     }
+  );
+
+const wss =
+  new WebSocketServer({
+    server
   });
 
-  ws.on('close', () => {
-    const client = clients.get(ws);
-
-    if (!client) return;
-
-    const room = rooms.get(client.roomCode);
-
-    if (!room) {
-      clients.delete(ws);
-      return;
-    }
-
-    const playerIndex = room.players.findIndex(
-      player => player.id === client.playerId
+wss.on(
+  'connection',
+  (ws) => {
+    console.log(
+      'Client connected'
     );
 
-    if (playerIndex !== -1) {
-      const player = room.players[playerIndex];
+    send(
+      ws,
+      'CONNECTED',
+      {
+        message:
+          'Connected to Dub Together server'
+      }
+    );
 
-      room.players.splice(playerIndex, 1);
+    send(
+      ws,
+      'SCENE_LIBRARY',
+      {
+        scenes:
+          Object.values(
+            SCENES
+          )
+      }
+    );
 
-      console.log(`${player.name} left ${room.code}`);
+    ws.on(
+      'message',
+      (message) => {
+        try {
+          const data =
+            JSON.parse(
+              message.toString()
+            );
 
-      if (room.players.length === 0) {
-        rooms.delete(room.code);
-        console.log(`Room deleted: ${room.code}`);
-      } else {
-        if (room.hostId === player.id) {
-          room.hostId = room.players[0].id;
+          console.log(
+            'WS message:',
+            data.type,
+            data
+          );
+
+          switch (
+            data.type
+          ) {
+            case 'CREATE_ROOM':
+              handleCreateRoom(
+                ws,
+                data
+              );
+              break;
+
+            case 'JOIN_ROOM':
+              handleJoinRoom(
+                ws,
+                data
+              );
+              break;
+
+            case 'SET_MODE':
+              handleSetMode(
+                ws,
+                data
+              );
+              break;
+
+            case 'SET_SCENE':
+              handleSetScene(
+                ws,
+                data
+              );
+              break;
+
+            case 'START_ROUND':
+              handleStartRound(
+                ws
+              );
+              break;
+
+            case 'SET_PHASE':
+              handlePhaseChange(
+                ws,
+                data
+              );
+              break;
+
+            case 'SUBMIT_VOTE':
+              handleVote(
+                ws,
+                data
+              );
+              break;
+
+            case 'PING':
+              handlePing(ws);
+              break;
+
+            default:
+              send(
+                ws,
+                'ERROR',
+                {
+                  message:
+                    `Evento sconosciuto: ${data.type}`
+                }
+              );
+          }
+        } catch (error) {
+          console.error(
+            'Message error:',
+            error
+          );
+
+          send(
+            ws,
+            'ERROR',
+            {
+              message:
+                'Messaggio non valido.'
+            }
+          );
+        }
+      }
+    );
+
+    ws.on(
+      'close',
+      () => {
+        const client =
+          clients.get(ws);
+
+        if (!client) {
+          return;
         }
 
-        broadcastRoomState(room);
+        const room =
+          rooms.get(
+            client.roomCode
+          );
+
+        if (!room) {
+          clients.delete(ws);
+          return;
+        }
+
+        const playerIndex =
+          room.players.findIndex(
+            (player) =>
+              player.id ===
+              client.playerId
+          );
+
+        if (
+          playerIndex !== -1
+        ) {
+          const player =
+            room.players[
+              playerIndex
+            ];
+
+          room.players.splice(
+            playerIndex,
+            1
+          );
+
+          console.log(
+            `${player.name} left ${room.code}`
+          );
+
+          if (
+            room.players.length ===
+            0
+          ) {
+            rooms.delete(
+              room.code
+            );
+
+            console.log(
+              `Room deleted: ${room.code}`
+            );
+          } else {
+            if (
+              room.hostId ===
+              player.id
+            ) {
+              room.hostId =
+                room.players[0].id;
+            }
+
+            broadcastRoomState(
+              room
+            );
+          }
+        }
+
+        clients.delete(ws);
       }
-    }
+    );
+  }
+);
 
-    clients.delete(ws);
-  });
-});
-
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(
-    `Dub Together server listening on port ${PORT}`
-  );
-});
+server.listen(
+  PORT,
+  '0.0.0.0',
+  () => {
+    console.log(
+      `Dub Together server listening on port ${PORT}`
+    );
+  }
+);
