@@ -340,10 +340,13 @@ function renderPlayers() {
 
 function renderSceneLibrary() {
   const container = $('.scene-options');
-
   if (!container) return;
 
-  if (!state.sceneLibrary.length) {
+  const scenes = Array.isArray(state.sceneLibrary)
+    ? state.sceneLibrary
+    : [];
+
+  if (!scenes.length) {
     container.innerHTML = `
       <div class="empty-state">
         nessuna scena disponibile
@@ -352,52 +355,63 @@ function renderSceneLibrary() {
     return;
   }
 
-  const isHost =
-    !state.hostId ||
-    state.playerId === state.hostId;
+  container.innerHTML = scenes.map((scene) => {
+    const selected = scene.id === state.scene;
 
-  container.innerHTML = state.sceneLibrary
-    .map((scene) => {
-      const selected = scene.id === state.scene;
+    return `
+      <button
+        class="scene-option ${selected ? 'selected' : ''}"
+        data-scene="${escapeHtml(scene.id)}"
+        type="button"
+      >
+        <div class="scene-option-main">
+          <strong>${escapeHtml(scene.title || scene.id)}</strong>
+          <span>${escapeHtml(scene.category || 'scena')}</span>
+        </div>
+        <span class="scene-duration">
+          ${Number(scene.duration || 0)}s
+        </span>
+      </button>
+    `;
+  }).join('');
 
-      return `
-        <button
-          class="scene-option ${selected ? 'selected' : ''}"
-          data-scene="${escapeHtml(scene.id)}"
-          ${isHost ? '' : 'disabled'}
-        >
-          <span class="scene-option-title">
-            ${escapeHtml(scene.title || scene.id)}
-          </span>
-          <small>
-            ${formatSceneDuration(scene.duration)}
-            · ${escapeHtml(scene.category || 'scena')}
-          </small>
-        </button>
-      `;
-    })
-    .join('');
-
-  $$('.scene-option').forEach((button) => {
+  container.querySelectorAll('.scene-option').forEach((button) => {
     button.addEventListener('click', () => {
-      if (!isHost) return;
-
       const sceneId = button.dataset.scene;
 
-      state.scene = sceneId;
+      if (!sceneId) return;
 
-      $$('.scene-option').forEach((item) => {
-        item.classList.toggle(
-          'selected',
-          item.dataset.scene === sceneId
-        );
-      });
-
-      send('SET_SCENE', {
-        scene: scene.id
-      });
+      selectScene(sceneId);
     });
   });
+}
+
+function selectScene(sceneId) {
+  if (!sceneId) return;
+
+  const selectedScene = state.sceneLibrary.find(
+    (item) => item.id === sceneId
+  );
+
+  if (!selectedScene) {
+    toast('Scena non disponibile.');
+    return;
+  }
+
+  state.scene = selectedScene.id;
+  state.sceneData = selectedScene;
+
+  renderSceneLibrary();
+
+  if (!state.connected || socket?.readyState !== WebSocket.OPEN) {
+    return;
+  }
+
+  send('SET_SCENE', {
+    scene: selectedScene.id
+  });
+
+  console.log('➡️ SET_SCENE', selectedScene.id);
 }
 
 function handleGameStarted(data) {
