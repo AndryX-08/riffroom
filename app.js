@@ -170,7 +170,7 @@ function connect() {
       socket.readyState === WebSocket.CONNECTING
     )
   ) {
-    return;
+    return socket;
   }
 
   socket = new WebSocket(SERVER_URL);
@@ -178,19 +178,26 @@ function connect() {
   socket.addEventListener('open', () => {
     state.connected = true;
 
+    console.log('🔌 WebSocket connesso');
+
     send('GET_SCENES');
   });
 
   socket.addEventListener('close', () => {
     state.connected = false;
 
+    console.log('🔌 WebSocket disconnesso');
+
     if (state.screen !== 'home') {
       toast('Connessione persa.');
     }
   });
 
-  socket.addEventListener('error', () => {
+  socket.addEventListener('error', (error) => {
     state.connected = false;
+
+    console.error('❌ WebSocket error:', error);
+
     toast('Errore di connessione al server.');
   });
 
@@ -199,9 +206,14 @@ function connect() {
       const data = JSON.parse(event.data);
       handleServerMessage(data);
     } catch (error) {
-      console.error('Messaggio server non valido:', error);
+      console.error(
+        'Messaggio server non valido:',
+        error
+      );
     }
   });
+
+  return socket;
 }
 
 function handleServerMessage(data) {
@@ -1436,48 +1448,95 @@ function updateTimer() {
   });
 }
 
-function createRoom() {
-  const nameInput = $('#host-name');
-  const name = nameInput?.value?.trim() || 'Host';
+function waitForSocketOpen(timeout = 10000) {
+  return new Promise((resolve, reject) => {
+    if (
+      socket &&
+      socket.readyState === WebSocket.OPEN
+    ) {
+      resolve(socket);
+      return;
+    }
 
-  if (!name) {
-    toast('Inserisci il tuo nome.');
-    return;
-  }
+    const ws = connect();
 
-  if (!state.connected) {
-    connect();
+    if (!ws) {
+      reject(new Error('WebSocket non disponibile.'));
+      return;
+    }
 
-    const waitForConnection = setInterval(() => {
-      if (
-        socket &&
-        socket.readyState === WebSocket.OPEN
-      ) {
-        clearInterval(waitForConnection);
+    const startedAt = Date.now();
 
-        send('CREATE_ROOM', {
-          name,
-          scene: state.scene,
-          mode: state.mode
-        });
+    const check = () => {
+      if (ws.readyState === WebSocket.OPEN) {
+        resolve(ws);
+        return;
       }
-    }, 50);
 
-    setTimeout(() => {
-      clearInterval(waitForConnection);
-    }, 5000);
+      if (ws.readyState === WebSocket.CLOSED) {
+        reject(new Error('WebSocket chiuso.'));
+        return;
+      }
 
-    return;
-  }
+      if (Date.now() - startedAt >= timeout) {
+        reject(
+          new Error(
+            'Timeout connessione WebSocket.'
+          )
+        );
+        return;
+      }
 
-  send('CREATE_ROOM', {
-    name,
-    scene: state.scene,
-    mode: state.mode
+      setTimeout(check, 50);
+    };
+
+    check();
   });
 }
 
-function joinRoom() {
+async function createRoom() {
+  const nameInput = $('#host-name');
+
+  const name =
+    nameInput?.value?.trim() ||
+    'Host';
+
+  if (!name) {
+    toast('Inserisci il tuo nome.');
+    nameInput?.focus();
+    return;
+  }
+
+  try {
+    console.log('🏠 Creazione stanza...', {
+      name,
+      scene: state.scene,
+      mode: state.mode
+    });
+
+    const ws = await waitForSocketOpen();
+
+    ws.send(JSON.stringify({
+      type: 'CREATE_ROOM',
+      name,
+      scene: state.scene,
+      mode: state.mode
+    }));
+
+    console.log('📤 CREATE_ROOM inviato');
+  } catch (error) {
+    console.error(
+      '❌ Impossibile creare la stanza:',
+      error
+    );
+
+    toast(
+      'Impossibile collegarsi al server.'
+    );
+  }
+}
+
+async function joinRoom() {
   const nameInput = $('#join-name');
   const codeInput = $('#room-code');
 
@@ -1496,39 +1555,80 @@ function joinRoom() {
     return;
   }
 
-  if (room.length < 6) {
-    toast('Il codice stanza deve essere del tipo ABC-123.');
+  if (!/^[A-Z0-9]{3}-[A-Z0-9]{3}$/.test(room)) {
+    toast(
+      'Il codice stanza deve essere del tipo ABC-123.'
+    );
     codeInput?.focus();
     return;
   }
 
-  if (!state.connected) {
-    connect();
+  try {
+    console.log('🚪 Entrata nella stanza...', {
+      room,
+      name
+    });
 
-    const waitForConnection = setInterval(() => {
-      if (
-        socket &&
-        socket.readyState === WebSocket.OPEN
-      ) {
-        clearInterval(waitForConnection);
+    const ws = await waitForSocketOpen();
 
-        send('JOIN_ROOM', {
-          room,
-          name
-        });
-      }
-    }, 50);
+    ws.send(JSON.stringify({
+      type: 'JOIN_ROOM',
+      room,
+      name
+    }));
 
-    setTimeout(() => {
-      clearInterval(waitForConnection);
-    }, 5000);
+    console.log('📤 JOIN_ROOM inviato');
+  } catch (error) {
+    console.error(
+      '❌ Impossibile entrare nella stanza:',
+      error
+    );
 
+    toast(
+      'Impossibile collegarsi al server.'
+    );
+  }
+}
+
+function addDemoGuest() {
+  if (!state.room) {
+    toast('Crea prima una stanza.');
     return;
   }
 
-  send('JOIN_ROOM', {
-    room,
-    name
+  send('ADD_DEMO_GUEST', {
+    room: state.room
+  });
+}
+
+function startRound() {
+  if (!state.room) {
+    toast('Stanza non disponibile.');
+    return;
+  }
+
+  if (
+    state.playerId !== state.hostId
+  ) {
+    toast('Solo l’host può iniziare il round.');
+    return;
+  }
+
+  if (!state.scene) {
+    toast('Seleziona una scena.');
+    return;
+  }
+
+  console.log('🎬 Avvio round:', {
+    room: state.room,
+    scene: state.scene,
+    mode: state.mode
+  });
+
+  send('START_GAME', {
+    room: state.room,
+    scene: state.scene,
+    mode: state.mode
   });
 }
 
