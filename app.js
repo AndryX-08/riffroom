@@ -64,16 +64,17 @@ function toast(message) {
 }
 
 function go(screen) {
-  state.screen = screen;
+  const target = String(screen || 'home').trim();
 
-  $$('.screen').forEach((el) => {
-    el.classList.toggle('active', el.dataset.screen === screen);
+  $$('.screen').forEach((section) => {
+    section.classList.toggle(
+      'screen-active',
+      section.dataset.screen === target
+    );
   });
 
-  window.scrollTo({
-    top: 0,
-    behavior: 'smooth'
-  });
+  state.screen = target;
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 function send(type, payload = {}) {
