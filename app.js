@@ -289,6 +289,7 @@ async function handleGameStarted(data) {
   state.mode = data.mode || state.mode;
   state.scene = data.scene || state.scene;
   state.sceneData = data.sceneData || state.sceneData;
+
   state.line = 0;
   state.take = 1;
   state.recordings = {};
@@ -296,7 +297,9 @@ async function handleGameStarted(data) {
 
   if ($('#mode-label')) {
     $('#mode-label').textContent =
-      state.mode === 'roles' ? 'cast condiviso' : 'ognuno per sé';
+      state.mode === 'roles'
+        ? 'cast condiviso'
+        : 'ognuno per sé';
   }
 
   if ($('#record-title')) {
@@ -304,11 +307,17 @@ async function handleGameStarted(data) {
       state.sceneData?.title || 'Dub Together';
   }
 
+  // Prima entriamo nella schermata record
+  go('record');
+
+  // Poi carichiamo la scena
   await loadSharedScene();
 
+  // Aggiorniamo battute e interfaccia
   renderLines();
   updateLine();
-  go('record');
+
+  // Impostiamo la fase
   setPhase('listen');
 }
 
@@ -1336,31 +1345,24 @@ function renderWaveform() {
     `).join('');
 }
 
-$('#listen-original')?.addEventListener(
-  'click',
-  () => {
-    if (!localClipUrl) {
-      if ($('#enter-recording')) {
-        $('#enter-recording').disabled =
-          false;
-      }
+$('#listen-original')?.addEventListener('click', async () => {
+  const clipVideo = $('#clip-video');
 
-      toast(
-        'Nessuna clip caricata: scena demo pronta, puoi passare alla rec.'
-      );
-
-      return;
+  if (!clipVideo || !state.sceneData?.video) {
+    if ($('#enter-recording')) {
+      $('#enter-recording').disabled = false;
     }
 
-    if (clipVideo) {
-      clipVideo.hidden = false;
-      clipVideo.muted = false;
-      clipVideo.currentTime = 0;
+    toast('Video della scena non disponibile');
+    return;
+  }
 
-      clipVideo
-        .play()
-        .catch(() => {});
-    }
+  clipVideo.hidden = false;
+  clipVideo.muted = false;
+  clipVideo.currentTime = 0;
+
+  try {
+    await clipVideo.play();
 
     if ($('#mic-status')) {
       $('#mic-status').textContent =
@@ -1368,15 +1370,20 @@ $('#listen-original')?.addEventListener(
     }
 
     if ($('#enter-recording')) {
-      $('#enter-recording').disabled =
-        false;
+      $('#enter-recording').disabled = false;
     }
 
-    toast(
-      'Scena originale in riproduzione'
-    );
+    toast('Scena originale in riproduzione');
+  } catch (error) {
+    console.error('Errore riproduzione video:', error);
+
+    if ($('#enter-recording')) {
+      $('#enter-recording').disabled = false;
+    }
+
+    toast('Impossibile riprodurre la scena');
   }
-);
+});
 
 $('#enter-recording')?.addEventListener(
   'click',
