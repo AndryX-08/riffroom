@@ -166,10 +166,8 @@ function getLineKey() {
 function connect() {
   if (
     socket &&
-    (
-      socket.readyState === WebSocket.OPEN ||
-      socket.readyState === WebSocket.CONNECTING
-    )
+    (socket.readyState === WebSocket.OPEN ||
+      socket.readyState === WebSocket.CONNECTING)
   ) {
     return socket;
   }
@@ -178,15 +176,11 @@ function connect() {
 
   socket.addEventListener('open', () => {
     state.connected = true;
-
     console.log('🔌 WebSocket connesso');
-
-    send('GET_SCENES');
   });
 
   socket.addEventListener('close', () => {
     state.connected = false;
-
     console.log('🔌 WebSocket disconnesso');
 
     if (state.screen !== 'home') {
@@ -196,10 +190,7 @@ function connect() {
 
   socket.addEventListener('error', (error) => {
     state.connected = false;
-
     console.error('❌ WebSocket error:', error);
-
-    toast('Errore di connessione al server.');
   });
 
   socket.addEventListener('message', (event) => {
@@ -207,10 +198,7 @@ function connect() {
       const data = JSON.parse(event.data);
       handleServerMessage(data);
     } catch (error) {
-      console.error(
-        'Messaggio server non valido:',
-        error
-      );
+      console.error('Messaggio server non valido:', error);
     }
   });
 
@@ -221,32 +209,27 @@ function handleServerMessage(data) {
   console.log('📡 SERVER:', data);
 
   switch (data.type) {
-    case 'SCENE_LIBRARY':
-      state.sceneLibrary = Array.isArray(data.scenes)
-        ? data.scenes
-        : [];
+    case 'CONNECTED':
+      console.log('✅ Server pronto:', data.message || 'connesso');
+      break;
 
+    case 'SCENE_LIBRARY':
+      state.sceneLibrary = Array.isArray(data.scenes) ? data.scenes : [];
       renderSceneLibrary();
       break;
 
     case 'ROOM_CREATED':
-      state.room = data.room || '';
+      state.room = data.roomCode || '';
       state.playerId = data.playerId || null;
       state.hostId = data.hostId || state.playerId || null;
-
-      if (data.scene) {
-        state.scene = data.scene;
-      }
-
       updateRoomCode();
       go('lobby');
       break;
 
     case 'ROOM_JOINED':
-      state.room = data.room || state.room;
-      state.playerId = data.playerId || state.playerId;
-      state.hostId = data.hostId || state.hostId;
-
+      state.room = data.roomCode || '';
+      state.playerId = data.playerId || null;
+      state.hostId = data.hostId || null;
       updateRoomCode();
       go('lobby');
       break;
@@ -266,8 +249,20 @@ function handleServerMessage(data) {
       }
       break;
 
+    case 'VOTE_UPDATE':
+      console.log('🗳️ Voti aggiornati:', data.results);
+      break;
+
     case 'RESULTS':
       handleResults(data);
+      break;
+
+    case 'ERROR':
+      console.error('❌ Server:', data.message);
+      toast(data.message || 'Errore del server.');
+      break;
+
+    case 'PONG':
       break;
 
     default:
@@ -398,9 +393,8 @@ function renderSceneLibrary() {
         );
       });
 
-      send('SELECT_SCENE', {
-        room: state.room,
-        scene: sceneId
+      send('SET_SCENE', {
+        scene: scene.id
       });
     });
   });
@@ -1497,10 +1491,7 @@ function waitForSocketOpen(timeout = 10000) {
 
 async function createRoom() {
   const nameInput = $('#host-name');
-
-  const name =
-    nameInput?.value?.trim() ||
-    'Host';
+  const name = nameInput?.value?.trim() || 'Host';
 
   if (!name) {
     toast('Inserisci il tuo nome.');
@@ -1508,87 +1499,94 @@ async function createRoom() {
     return;
   }
 
-  try {
-    console.log('🏠 Creazione stanza...', {
-      name,
-      scene: state.scene,
-      mode: state.mode
-    });
+  const ws = await waitForSocketOpen();
 
-    const ws = await waitForSocketOpen();
-
-    ws.send(JSON.stringify({
+  ws.send(
+    JSON.stringify({
       type: 'CREATE_ROOM',
       name,
       scene: state.scene,
       mode: state.mode
-    }));
+    })
+  );
 
-    console.log('📤 CREATE_ROOM inviato');
-  } catch (error) {
-    console.error(
-      '❌ Impossibile creare la stanza:',
-      error
-    );
+  console.log('➡️ CREATE_ROOM', {
+    name,
+    scene: state.scene,
+    mode: state.mode
+  });
+}
 
-    toast(
-      'Impossibile collegarsi al server.'
-    );
-  }
+function waitForSocketOpen(timeout = 20000) {
+  return new Promise((resolve, reject) => {
+    if (socket?.readyState === WebSocket.OPEN) {
+      resolve(socket);
+      return;
+    }
+
+    const ws = socket?.readyState === WebSocket.CONNECTING
+      ? socket
+      : connect();
+
+    const startedAt = Date.now();
+
+    const check = () => {
+      if (ws.readyState === WebSocket.OPEN) {
+        resolve(ws);
+        return;
+      }
+
+      if (ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+        reject(new Error('Connessione al server chiusa.'));
+        return;
+      }
+
+      if (Date.now() - startedAt >= timeout) {
+        reject(new Error('Timeout connessione al server.'));
+        return;
+      }
+
+      setTimeout(check, 100);
+    };
+
+    check();
+  }).catch((error) => {
+    console.error('❌ Connessione WebSocket:', error);
+    toast('Il server non è raggiungibile. Riprova tra poco.');
+    throw error;
+  });
 }
 
 async function joinRoom() {
   const nameInput = $('#join-name');
   const codeInput = $('#room-code');
 
-  const name =
-    nameInput?.value?.trim() ||
-    'Giocatore';
+  const name = nameInput?.value?.trim() || 'Giocatore';
+  const roomCode = codeInput?.value?.trim().toUpperCase();
 
-  const room =
-    codeInput?.value
-      ?.trim()
-      .toUpperCase();
-
-  if (!room) {
+  if (!roomCode) {
     toast('Inserisci il codice della stanza.');
     codeInput?.focus();
     return;
   }
 
-  if (!/^[A-Z0-9]{3}-[A-Z0-9]{3}$/.test(room)) {
-    toast(
-      'Il codice stanza deve essere del tipo ABC-123.'
-    );
+  if (roomCode.replace(/[^A-Z0-9]/g, '').length !== 6) {
+    toast('Il codice stanza non è valido.');
     codeInput?.focus();
     return;
   }
 
-  try {
-    console.log('🚪 Entrata nella stanza...', {
-      room,
-      name
-    });
+  const ws = await waitForSocketOpen();
 
-    const ws = await waitForSocketOpen();
-
-    ws.send(JSON.stringify({
+  ws.send(
+    JSON.stringify({
       type: 'JOIN_ROOM',
-      room,
+      roomCode,
       name
-    }));
+    })
+  );
 
-    console.log('📤 JOIN_ROOM inviato');
-  } catch (error) {
-    console.error(
-      '❌ Impossibile entrare nella stanza:',
-      error
-    );
-
-    toast(
-      'Impossibile collegarsi al server.'
-    );
-  }
+  console.log('➡️ JOIN_ROOM', { roomCode, name });
 }
 
 function addDemoGuest() {
@@ -1603,34 +1601,12 @@ function addDemoGuest() {
 }
 
 function startRound() {
-  if (!state.room) {
-    toast('Stanza non disponibile.');
+  if (!state.connected || socket?.readyState !== WebSocket.OPEN) {
+    toast('Connessione al server non pronta.');
     return;
   }
 
-  if (
-    state.playerId !== state.hostId
-  ) {
-    toast('Solo l’host può iniziare il round.');
-    return;
-  }
-
-  if (!state.scene) {
-    toast('Seleziona una scena.');
-    return;
-  }
-
-  console.log('🎬 Avvio round:', {
-    room: state.room,
-    scene: state.scene,
-    mode: state.mode
-  });
-
-  send('START_GAME', {
-    room: state.room,
-    scene: state.scene,
-    mode: state.mode
-  });
+  send('START_ROUND');
 }
 
 function setupNavigation() {
