@@ -1437,47 +1437,49 @@ function updateTimer() {
 }
 
 function createRoom() {
-  const nameInput =
-    $('#player-name') ||
-    $('#name-input');
-
-  const name =
-    nameInput?.value?.trim() ||
-    'Host';
+  const nameInput = $('#host-name');
+  const name = nameInput?.value?.trim() || 'Host';
 
   if (!name) {
     toast('Inserisci il tuo nome.');
     return;
   }
 
-  connect();
+  if (!state.connected) {
+    connect();
 
-  const sendCreate = () => {
-    send('CREATE_ROOM', {
-      name,
-      scene: state.scene,
-      mode: state.mode
-    });
-  };
+    const waitForConnection = setInterval(() => {
+      if (
+        socket &&
+        socket.readyState === WebSocket.OPEN
+      ) {
+        clearInterval(waitForConnection);
 
-  if (
-    socket &&
-    socket.readyState === WebSocket.OPEN
-  ) {
-    sendCreate();
-  } else {
-    setTimeout(sendCreate, 300);
+        send('CREATE_ROOM', {
+          name,
+          scene: state.scene,
+          mode: state.mode
+        });
+      }
+    }, 50);
+
+    setTimeout(() => {
+      clearInterval(waitForConnection);
+    }, 5000);
+
+    return;
   }
+
+  send('CREATE_ROOM', {
+    name,
+    scene: state.scene,
+    mode: state.mode
+  });
 }
 
 function joinRoom() {
-  const nameInput =
-    $('#player-name') ||
-    $('#name-input');
-
-  const codeInput =
-    $('#room-code') ||
-    $('#join-code');
+  const nameInput = $('#join-name');
+  const codeInput = $('#room-code');
 
   const name =
     nameInput?.value?.trim() ||
@@ -1486,75 +1488,88 @@ function joinRoom() {
   const room =
     codeInput?.value
       ?.trim()
-      ?.toUpperCase();
+      .toUpperCase();
 
   if (!room) {
     toast('Inserisci il codice della stanza.');
+    codeInput?.focus();
     return;
   }
 
-  connect();
-
-  const sendJoin = () => {
-    send('JOIN_ROOM', {
-      room,
-      name
-    });
-  };
-
-  if (
-    socket &&
-    socket.readyState === WebSocket.OPEN
-  ) {
-    sendJoin();
-  } else {
-    setTimeout(sendJoin, 300);
-  }
-}
-
-function addDemoGuest() {
-  send('ADD_DEMO_PLAYER', {
-    room: state.room
-  });
-}
-
-function startRound() {
-  if (!state.room) {
-    toast('Stanza non disponibile.');
+  if (room.length < 6) {
+    toast('Il codice stanza deve essere del tipo ABC-123.');
+    codeInput?.focus();
     return;
   }
 
-  send('START_GAME', {
-    room: state.room,
-    scene: state.scene,
-    mode: state.mode
+  if (!state.connected) {
+    connect();
+
+    const waitForConnection = setInterval(() => {
+      if (
+        socket &&
+        socket.readyState === WebSocket.OPEN
+      ) {
+        clearInterval(waitForConnection);
+
+        send('JOIN_ROOM', {
+          room,
+          name
+        });
+      }
+    }, 50);
+
+    setTimeout(() => {
+      clearInterval(waitForConnection);
+    }, 5000);
+
+    return;
+  }
+
+  send('JOIN_ROOM', {
+    room,
+    name
   });
 }
 
 function setupNavigation() {
   $('#create-room')?.addEventListener(
     'click',
-    createRoom
+    (event) => {
+      event.preventDefault();
+      createRoom();
+    }
   );
 
   $('#join-room')?.addEventListener(
     'click',
-    joinRoom
+    (event) => {
+      event.preventDefault();
+      joinRoom();
+    }
   );
 
   $('#add-guest')?.addEventListener(
     'click',
-    addDemoGuest
+    (event) => {
+      event.preventDefault();
+      addDemoGuest();
+    }
   );
 
   $('#start-round')?.addEventListener(
     'click',
-    startRound
+    (event) => {
+      event.preventDefault();
+      startRound();
+    }
   );
 
   $('#copy-code')?.addEventListener(
     'click',
-    async () => {
+    async (event) => {
+      event.preventDefault();
+
       if (!state.room) return;
 
       try {
@@ -1564,22 +1579,45 @@ function setupNavigation() {
 
         toast('Codice copiato.');
       } catch {
-        toast(
-          `Codice stanza: ${state.room}`
-        );
+        toast(`Codice stanza: ${state.room}`);
       }
     }
   );
 
-  $('#back-home')?.addEventListener(
-    'click',
-    () => go('home')
-  );
+  $$('[data-go]').forEach((button) => {
+    button.addEventListener(
+      'click',
+      (event) => {
+        event.preventDefault();
 
-  $('#back-lobby')?.addEventListener(
-    'click',
-    () => go('lobby')
-  );
+        const target = button.dataset.go;
+
+        if (target) {
+          go(target);
+        }
+      }
+    );
+  });
+
+  $$('.mode-option').forEach((button) => {
+    button.addEventListener(
+      'click',
+      () => {
+        const mode = button.dataset.mode;
+
+        if (!mode) return;
+
+        state.mode = mode;
+
+        $$('.mode-option').forEach((item) => {
+          item.classList.toggle(
+            'selected',
+            item === button
+          );
+        });
+      }
+    );
+  });
 }
 
 function setupRecordingControls() {
@@ -1669,27 +1707,29 @@ function setupKeyboard() {
     'keydown',
     async (event) => {
       if (
-        event.key === 'Enter' &&
-        state.screen === 'record'
+        event.key !== 'Enter' ||
+        state.screen !== 'record'
       ) {
-        const target = event.target;
+        return;
+      }
 
-        if (
-          target instanceof HTMLInputElement ||
-          target instanceof HTMLTextAreaElement
-        ) {
-          return;
-        }
+      const target = event.target;
 
-        if (
-          state.linePhase === 'LISTEN'
-        ) {
-          await startCurrentLineRecording();
-        } else if (
-          state.linePhase === 'REVIEW'
-        ) {
-          await goToNextLine();
-        }
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement
+      ) {
+        return;
+      }
+
+      if (
+        state.linePhase === 'LISTEN'
+      ) {
+        await startCurrentLineRecording();
+      } else if (
+        state.linePhase === 'REVIEW'
+      ) {
+        await goToNextLine();
       }
     }
   );
@@ -1709,6 +1749,27 @@ function cleanupRecordings() {
   state.recordings = {};
 }
 
+function initializeApp() {
+  setupNavigation();
+  setupRecordingControls();
+  setupVideoEvents();
+  setupKeyboard();
+
+  connect();
+
+  console.log('🎬 RiffRoom app avviata');
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener(
+    'DOMContentLoaded',
+    initializeApp,
+    { once: true }
+  );
+} else {
+  initializeApp();
+}
+
 window.addEventListener(
   'beforeunload',
   () => {
@@ -1719,12 +1780,3 @@ window.addEventListener(
     cleanupRecordings();
   }
 );
-
-setupNavigation();
-setupRecordingControls();
-setupVideoEvents();
-setupKeyboard();
-
-connect();
-
-console.log('🎬 RiffRoom app avviata');
