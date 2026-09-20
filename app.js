@@ -195,7 +195,7 @@ function handleRoomCreated(data) {
     $('#room-code-label').textContent = state.room;
   }
 
-  console.log('🏠 Stanza creata:', state.room);
+  console.log('🏠 STANZA CREATA:', state.room);
 
   go('lobby');
   syncLobbyControls();
@@ -630,11 +630,18 @@ $('#join-room')?.addEventListener('click', async () => {
     return;
   }
 
+  if (roomCode.length !== 6) {
+    toast('Il codice deve avere 6 caratteri');
+    return;
+  }
+
   console.log(
     '🚪 Tentativo ingresso stanza:',
     rawCode,
-    '->',
-    roomCode
+    '→',
+    roomCode,
+    'lunghezza:',
+    roomCode.length
   );
 
   const success = await send('JOIN_ROOM', {
