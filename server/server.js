@@ -11,6 +11,17 @@ const clients = new Map();
 const emojis = ['🦊', '🐙', '🐸', '🐼', '🐵', '🐯'];
 const colors = ['#ffd45c', '#bba7ff', '#a9e4bb', '#ff9f9f', '#7dd3fc', '#f9a8d4'];
 
+const SCENES = {
+  'generale-hartman': {
+    id: 'generale-hartman',
+    title: 'Generale Hartman',
+    category: 'commedia',
+    duration: 28,
+    video: 'https://archive.org/download/generale-hartman_202609/generale-hartman_202609',
+    riffpack: 'https://archive.org/download/riffpack.generale-hartman/riffpack.generale-hartman'
+  }
+};
+
 function generateId() {
   return crypto.randomUUID();
 }
@@ -23,17 +34,32 @@ function normalizeRoomCode(value) {
 
 function generateRoomCode() {
   let code;
-
   do {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
     const raw = Array.from({ length: 6 }, () =>
       chars[Math.floor(Math.random() * chars.length)]
     );
-
     code = `${raw.slice(0, 3).join('')}-${raw.slice(3).join('')}`;
   } while (rooms.has(code));
-
   return code;
+}
+
+function getScene(sceneId) {
+  return SCENES[String(sceneId || '')] || null;
+}
+
+function serializeScene(sceneId) {
+  const scene = getScene(sceneId);
+  if (!scene) return null;
+
+  return {
+    id: scene.id,
+    title: scene.title,
+    category: scene.category,
+    duration: scene.duration,
+    video: scene.video,
+    riffpack: scene.riffpack
+  };
 }
 
 function findRoomByCode(value) {
@@ -50,11 +76,7 @@ function findRoomByCode(value) {
 
 function send(ws, type, data = {}) {
   if (!ws || ws.readyState !== 1) return;
-
-  ws.send(JSON.stringify({
-    type,
-    ...data
-  }));
+  ws.send(JSON.stringify({ type, ...data }));
 }
 
 function broadcast(room, type, data = {}) {
@@ -69,6 +91,7 @@ function serializeRoom(room) {
     hostId: room.hostId,
     mode: room.mode,
     scene: room.scene,
+    sceneData: serializeScene(room.scene),
     phase: room.phase,
     players: room.players.map(player => ({
       id: player.id,
@@ -87,26 +110,16 @@ function broadcastRoomState(room) {
 
 function getRoomForSocket(ws) {
   const client = clients.get(ws);
-
-  if (!client?.roomCode) {
-    return null;
-  }
-
+  if (!client?.roomCode) return null;
   return rooms.get(client.roomCode) || null;
 }
 
 function getPlayerForSocket(ws) {
   const client = clients.get(ws);
-
-  if (!client) {
-    return null;
-  }
+  if (!client) return null;
 
   const room = rooms.get(client.roomCode);
-
-  if (!room) {
-    return null;
-  }
+  if (!room) return null;
 
   return room.players.find(player => player.id === client.playerId) || null;
 }
@@ -137,22 +150,30 @@ function handleCreateRoom(ws, data) {
   }
 
   const name = String(data.name || 'Host').trim() || 'Host';
-  const code = generateRoomCode();
+  const requestedScene = String(data.scene || 'generale-hartman');
+  const scene = getScene(requestedScene);
 
+  if (!scene) {
+    send(ws, 'ERROR', {
+      message: 'La scena selezionata non è disponibile.'
+    });
+    return;
+  }
+
+  const code = generateRoomCode();
   const player = createPlayer(name, ws);
 
   const room = {
     code,
     hostId: player.id,
     mode: data.mode === 'roles' ? 'roles' : 'parallel',
-    scene: String(data.scene || 'plan'),
+    scene: scene.id,
     phase: 'LOBBY',
     players: [player],
     createdAt: Date.now()
   };
 
   rooms.set(code, room);
-
   clients.set(ws, {
     roomCode: code,
     playerId: player.id
@@ -192,11 +213,6 @@ function handleJoinRoom(ws, data) {
     send(ws, 'ERROR', {
       message: `Stanza non trovata. Codice ricevuto: ${requestedCode || '(vuoto)'}`
     });
-
-    console.log(
-      `Join failed: "${requestedCode}" -> "${normalizedCode}" does not match any room`
-    );
-
     return;
   }
 
@@ -215,8 +231,8 @@ function handleJoinRoom(ws, data) {
   }
 
   const player = createPlayer(name, ws);
-
   const index = room.players.length;
+
   player.emoji = emojis[index % emojis.length];
   player.color = colors[index % colors.length];
 
@@ -241,13 +257,8 @@ function handleJoinRoom(ws, data) {
 function handleSetMode(ws, data) {
   const room = getRoomForSocket(ws);
 
-  if (!room || !isHost(ws, room)) {
-    return;
-  }
-
-  if (room.phase !== 'LOBBY') {
-    return;
-  }
+  if (!room || !isHost(ws, room)) return;
+  if (room.phase !== 'LOBBY') return;
 
   room.mode = data.mode === 'roles' ? 'roles' : 'parallel';
 
@@ -257,27 +268,37 @@ function handleSetMode(ws, data) {
 function handleSetScene(ws, data) {
   const room = getRoomForSocket(ws);
 
-  if (!room || !isHost(ws, room)) {
+  if (!room || !isHost(ws, room)) return;
+  if (room.phase !== 'LOBBY') return;
+
+  const scene = getScene(data.scene);
+
+  if (!scene) {
+    send(ws, 'ERROR', {
+      message: 'La scena selezionata non è disponibile.'
+    });
     return;
   }
 
-  if (room.phase !== 'LOBBY') {
-    return;
-  }
-
-  room.scene = String(data.scene || 'plan');
+  room.scene = scene.id;
 
   broadcastRoomState(room);
+
+  console.log(`Scene changed in ${room.code}: ${scene.id}`);
 }
 
 function handleStartRound(ws) {
   const room = getRoomForSocket(ws);
 
-  if (!room || !isHost(ws, room)) {
-    return;
-  }
+  if (!room || !isHost(ws, room)) return;
+  if (room.phase !== 'LOBBY') return;
 
-  if (room.phase !== 'LOBBY') {
+  const scene = getScene(room.scene);
+
+  if (!scene) {
+    send(ws, 'ERROR', {
+      message: 'La scena selezionata non è disponibile.'
+    });
     return;
   }
 
@@ -293,6 +314,7 @@ function handleStartRound(ws) {
     roomCode: room.code,
     mode: room.mode,
     scene: room.scene,
+    sceneData: serializeScene(room.scene),
     phase: room.phase,
     startedAt: room.startedAt
   });
@@ -305,9 +327,7 @@ function handleStartRound(ws) {
 function handlePhaseChange(ws, data) {
   const room = getRoomForSocket(ws);
 
-  if (!room || !isHost(ws, room)) {
-    return;
-  }
+  if (!room || !isHost(ws, room)) return;
 
   const allowed = [
     'LISTEN',
@@ -317,9 +337,7 @@ function handlePhaseChange(ws, data) {
     'RESULTS'
   ];
 
-  if (!allowed.includes(data.phase)) {
-    return;
-  }
+  if (!allowed.includes(data.phase)) return;
 
   room.phase = data.phase;
 
@@ -334,16 +352,10 @@ function handleVote(ws, data) {
   const room = getRoomForSocket(ws);
   const player = getPlayerForSocket(ws);
 
-  if (!room || !player) {
-    return;
-  }
-
-  if (room.phase !== 'VOTING') {
-    return;
-  }
+  if (!room || !player) return;
+  if (room.phase !== 'VOTING') return;
 
   const votedFor = String(data.votedFor || '');
-
   const target = room.players.find(p => p.id === votedFor);
 
   if (!target) {
@@ -416,7 +428,8 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify({
       status: 'ok',
       service: 'dub-together-server',
-      rooms: rooms.size
+      rooms: rooms.size,
+      scenes: Object.keys(SCENES).length
     }));
 
     return;
@@ -438,6 +451,10 @@ wss.on('connection', ws => {
 
   send(ws, 'CONNECTED', {
     message: 'Connected to Dub Together server'
+  });
+
+  send(ws, 'SCENE_LIBRARY', {
+    scenes: Object.values(SCENES)
   });
 
   ws.on('message', message => {
@@ -496,9 +513,7 @@ wss.on('connection', ws => {
   ws.on('close', () => {
     const client = clients.get(ws);
 
-    if (!client) {
-      return;
-    }
+    if (!client) return;
 
     const room = rooms.get(client.roomCode);
 
@@ -535,5 +550,7 @@ wss.on('connection', ws => {
 });
 
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Dub Together server listening on port ${PORT}`);
+  console.log(
+    `Dub Together server listening on port ${PORT}`
+  );
 });

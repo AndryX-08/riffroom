@@ -9,7 +9,9 @@ const SERVER_URL =
 const state = {
   screen: 'home',
   mode: 'parallel',
-  scene: 'plan',
+  scene: 'generale-hartman',
+  sceneData: null,
+  sceneLibrary: [],
   room: '',
   playerId: null,
   hostId: null,
@@ -162,6 +164,11 @@ function handleServerMessage(data) {
       handleGameStarted(data);
       break;
 
+    case 'SCENE_LIBRARY':
+      state.sceneLibrary = Array.isArray(data.scenes) ? data.scenes : [];
+      renderSceneLibrary();
+      break;
+
     case 'PHASE_CHANGED':
       setPhase(data.phase);
       break;
@@ -217,42 +224,71 @@ function handleRoomJoined(data) {
 }
 
 function handleRoomState(data) {
-  if (data.roomCode) {
-    state.room = data.roomCode;
-  }
-
-  if (data.hostId) {
-    state.hostId = data.hostId;
-  }
-
-  if (Array.isArray(data.players)) {
-    state.players = data.players;
-  }
-
-  if (data.mode) {
-    state.mode = data.mode;
-  }
-
-  if (data.scene) {
-    state.scene = data.scene;
-  }
-
-  if (data.phase) {
-    state.phase = data.phase;
-  }
+  if (data.roomCode) state.room = data.roomCode;
+  if (data.hostId) state.hostId = data.hostId;
+  if (Array.isArray(data.players)) state.players = data.players;
+  if (data.mode) state.mode = data.mode;
+  if (data.scene) state.scene = data.scene;
+  if (data.sceneData) state.sceneData = data.sceneData;
+  if (data.phase) state.phase = data.phase;
 
   if ($('#room-code-label')) {
     $('#room-code-label').textContent = state.room;
   }
 
   renderPlayers();
+  renderSceneLibrary();
   syncLobbyControls();
 }
 
-function handleGameStarted(data) {
+function renderSceneLibrary() {
+  const container = $('.scene-options');
+  if (!container) return;
+
+  if (!state.sceneLibrary.length) {
+    container.innerHTML = '<div class="scene-empty">Nessuna scena disponibile.</div>';
+    return;
+  }
+
+  const isHost =
+    !!state.playerId &&
+    !!state.hostId &&
+    state.playerId === state.hostId;
+
+  container.innerHTML = state.sceneLibrary.map(scene => `
+    <button
+      class="scene-option ${scene.id === state.scene ? 'selected' : ''}"
+      data-scene="${escapeHtml(scene.id)}"
+      ${isHost ? '' : 'disabled'}
+    >
+      <div class="mini-scene scene-pink">
+        <span>✦</span>
+        <span>◉</span>
+      </div>
+      <strong>${escapeHtml(scene.title)}</strong>
+      <small>00:${String(scene.duration).padStart(2, '0')} · ${escapeHtml(scene.category)}</small>
+    </button>
+  `).join('');
+
+  container.querySelectorAll('.scene-option').forEach(button => {
+    button.addEventListener('click', () => {
+      if (state.playerId !== state.hostId) {
+        toast('Solo l’host può scegliere la scena');
+        return;
+      }
+
+      state.scene = button.dataset.scene;
+      setSelected('.scene-option', 'scene', state.scene);
+      send('SET_SCENE', { scene: state.scene });
+    });
+  });
+}
+
+async function handleGameStarted(data) {
   state.phase = data.phase || 'LISTEN';
   state.mode = data.mode || state.mode;
   state.scene = data.scene || state.scene;
+  state.sceneData = data.sceneData || state.sceneData;
   state.line = 0;
   state.take = 1;
   state.recordings = {};
@@ -260,25 +296,66 @@ function handleGameStarted(data) {
 
   if ($('#mode-label')) {
     $('#mode-label').textContent =
-      state.mode === 'roles'
-        ? 'cast condiviso'
-        : 'ognuno per sé';
+      state.mode === 'roles' ? 'cast condiviso' : 'ognuno per sé';
   }
 
   if ($('#record-title')) {
     $('#record-title').textContent =
-      state.scene === 'space'
-        ? 'Missione spaziale'
-        : state.scene === 'kitchen'
-          ? 'Caos in cucina'
-          : 'Il piano perfetto';
+      state.sceneData?.title || 'Dub Together';
   }
+
+  await loadSharedScene();
 
   renderLines();
   updateLine();
-
   go('record');
   setPhase('listen');
+}
+async function loadSharedScene() {
+  const scene = state.sceneData;
+
+  if (!scene) {
+    toast('Dati della scena non disponibili');
+    return;
+  }
+
+  try {
+    const response = await fetch(scene.riffpack);
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const pack = await response.json();
+
+    state.pack = pack;
+    lines = Array.isArray(pack.lines) ? pack.lines : [];
+
+    const video = $('#clip-video');
+
+    if (video && scene.video) {
+      video.src = scene.video;
+      video.muted = true;
+      video.loop = true;
+      video.playsInline = true;
+      video.hidden = false;
+
+      video.load();
+
+      video.addEventListener('loadedmetadata', () => {
+        video.currentTime = 0;
+      }, { once: true });
+    }
+
+    renderLines();
+    updateLine();
+
+    console.log('🎬 Scena caricata:', scene.title);
+    console.log('📦 RiffPack:', pack);
+  } catch (error) {
+    console.error('Errore caricamento scena:', error);
+    toast('Impossibile caricare la scena');
+  }
 }
 
 function handleResults(data) {
@@ -576,24 +653,6 @@ $$('.mode-option').forEach(el => {
     if (state.playerId === state.hostId) {
       send('SET_MODE', {
         mode: state.mode
-      });
-    }
-  });
-});
-
-$$('.scene-option').forEach(el => {
-  el.addEventListener('click', () => {
-    state.scene = el.dataset.scene;
-
-    setSelected(
-      '.scene-option',
-      'scene',
-      state.scene
-    );
-
-    if (state.playerId === state.hostId) {
-      send('SET_SCENE', {
-        scene: state.scene
       });
     }
   });
