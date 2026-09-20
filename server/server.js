@@ -15,6 +15,12 @@ function generateId() {
   return crypto.randomUUID();
 }
 
+function normalizeRoomCode(value) {
+  return String(value || '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+}
+
 function generateRoomCode() {
   let code;
 
@@ -30,8 +36,20 @@ function generateRoomCode() {
   return code;
 }
 
+function findRoomByCode(value) {
+  const normalized = normalizeRoomCode(value);
+
+  for (const [code, room] of rooms) {
+    if (normalizeRoomCode(code) === normalized) {
+      return room;
+    }
+  }
+
+  return null;
+}
+
 function send(ws, type, data = {}) {
-  if (ws.readyState !== 1) return;
+  if (!ws || ws.readyState !== 1) return;
 
   ws.send(JSON.stringify({
     type,
@@ -70,7 +88,7 @@ function broadcastRoomState(room) {
 function getRoomForSocket(ws) {
   const client = clients.get(ws);
 
-  if (!client || !client.roomCode) {
+  if (!client?.roomCode) {
     return null;
   }
 
@@ -95,18 +113,15 @@ function getPlayerForSocket(ws) {
 
 function isHost(ws, room) {
   const player = getPlayerForSocket(ws);
-  return player && player.id === room.hostId;
+  return !!player && player.id === room.hostId;
 }
 
-function createPlayer(name, ws, host = false) {
-  const id = generateId();
-
+function createPlayer(name, ws) {
   return {
-    id,
-    name: name.slice(0, 30),
+    id: generateId(),
+    name: String(name || 'Giocatore').trim().slice(0, 30) || 'Giocatore',
     emoji: emojis[0],
     color: colors[0],
-    host,
     ws,
     recordings: {},
     votes: {}
@@ -114,17 +129,23 @@ function createPlayer(name, ws, host = false) {
 }
 
 function handleCreateRoom(ws, data) {
-  const name = String(data.name || 'Host').trim() || 'Host';
+  if (clients.has(ws)) {
+    send(ws, 'ERROR', {
+      message: 'Questo client è già associato a una stanza.'
+    });
+    return;
+  }
 
+  const name = String(data.name || 'Host').trim() || 'Host';
   const code = generateRoomCode();
 
-  const player = createPlayer(name, ws, true);
+  const player = createPlayer(name, ws);
 
   const room = {
     code,
     hostId: player.id,
     mode: data.mode === 'roles' ? 'roles' : 'parallel',
-    scene: data.scene || 'plan',
+    scene: String(data.scene || 'plan'),
     phase: 'LOBBY',
     players: [player],
     createdAt: Date.now()
@@ -140,24 +161,42 @@ function handleCreateRoom(ws, data) {
   send(ws, 'ROOM_CREATED', {
     roomCode: code,
     playerId: player.id,
-    hostId: room.hostId
+    hostId: player.id
   });
 
   broadcastRoomState(room);
 
-  console.log(`Room created: ${code}`);
+  console.log(`Room created: ${code} by ${name}`);
 }
 
 function handleJoinRoom(ws, data) {
-  const code = String(data.roomCode || '').trim().toUpperCase();
+  if (clients.has(ws)) {
+    send(ws, 'ERROR', {
+      message: 'Questo client è già associato a una stanza.'
+    });
+    return;
+  }
+
+  const requestedCode = String(data.roomCode || '');
+  const normalizedCode = normalizeRoomCode(requestedCode);
   const name = String(data.name || 'Giocatore').trim() || 'Giocatore';
 
-  const room = rooms.get(code);
+  console.log(
+    `Join request: "${requestedCode}" -> "${normalizedCode}". Rooms:`,
+    [...rooms.keys()]
+  );
+
+  const room = findRoomByCode(normalizedCode);
 
   if (!room) {
     send(ws, 'ERROR', {
-      message: 'Stanza non trovata.'
+      message: `Stanza non trovata. Codice ricevuto: ${requestedCode || '(vuoto)'}`
     });
+
+    console.log(
+      `Join failed: "${requestedCode}" -> "${normalizedCode}" does not match any room`
+    );
+
     return;
   }
 
@@ -175,7 +214,7 @@ function handleJoinRoom(ws, data) {
     return;
   }
 
-  const player = createPlayer(name, ws, false);
+  const player = createPlayer(name, ws);
 
   const index = room.players.length;
   player.emoji = emojis[index % emojis.length];
@@ -184,19 +223,19 @@ function handleJoinRoom(ws, data) {
   room.players.push(player);
 
   clients.set(ws, {
-    roomCode: code,
+    roomCode: room.code,
     playerId: player.id
   });
 
   send(ws, 'ROOM_JOINED', {
-    roomCode: code,
+    roomCode: room.code,
     playerId: player.id,
     hostId: room.hostId
   });
 
   broadcastRoomState(room);
 
-  console.log(`${name} joined ${code}`);
+  console.log(`${name} joined ${room.code}`);
 }
 
 function handleSetMode(ws, data) {
@@ -244,6 +283,7 @@ function handleStartRound(ws) {
 
   room.phase = 'LISTEN';
   room.startedAt = Date.now();
+
   room.players.forEach(player => {
     player.recordings = {};
     player.votes = {};
@@ -283,6 +323,10 @@ function handlePhaseChange(ws, data) {
 
   room.phase = data.phase;
 
+  broadcast(room, 'PHASE_CHANGED', {
+    phase: room.phase
+  });
+
   broadcastRoomState(room);
 }
 
@@ -320,7 +364,10 @@ function handleVote(ws, data) {
   }
 
   for (const p of room.players) {
-    if (p.votes?.votedFor && results[p.votes.votedFor] !== undefined) {
+    if (
+      p.votes?.votedFor &&
+      results[p.votes.votedFor] !== undefined
+    ) {
       results[p.votes.votedFor]++;
     }
   }
@@ -329,7 +376,9 @@ function handleVote(ws, data) {
     results
   });
 
-  const allVoted = room.players.every(p => p.votes?.votedFor);
+  const allVoted = room.players.every(
+    p => p.votes?.votedFor
+  );
 
   if (allVoted) {
     room.phase = 'RESULTS';
@@ -394,6 +443,8 @@ wss.on('connection', ws => {
   ws.on('message', message => {
     try {
       const data = JSON.parse(message.toString());
+
+      console.log('WS message:', data.type, data);
 
       switch (data.type) {
         case 'CREATE_ROOM':
@@ -473,7 +524,6 @@ wss.on('connection', ws => {
       } else {
         if (room.hostId === player.id) {
           room.hostId = room.players[0].id;
-          room.players[0].host = true;
         }
 
         broadcastRoomState(room);
