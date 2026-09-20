@@ -32,7 +32,7 @@ const state = {
   finalAudioContext: null,
   finalMixSources: [],
   finalMixPlaying: false,
-  remoteRecordings: {},
+  remoteRecordings: {}
 };
 
 const SERVER_URL =
@@ -60,11 +60,16 @@ function toast(message) {
   el.textContent = message;
   document.body.appendChild(el);
 
-  requestAnimationFrame(() => el.classList.add('show'));
+  requestAnimationFrame(() => {
+    el.classList.add('show');
+  });
 
   setTimeout(() => {
     el.classList.remove('show');
-    setTimeout(() => el.remove(), 250);
+
+    setTimeout(() => {
+      el.remove();
+    }, 250);
   }, 2500);
 }
 
@@ -79,7 +84,11 @@ function go(screen) {
   });
 
   state.screen = target;
-  window.scrollTo({ top: 0, behavior: 'smooth' });
+
+  window.scrollTo({
+    top: 0,
+    behavior: 'smooth'
+  });
 }
 
 function send(type, payload = {}) {
@@ -99,7 +108,11 @@ function send(type, payload = {}) {
 }
 
 function formatSceneDuration(seconds) {
-  const total = Math.max(0, Math.round(Number(seconds) || 0));
+  const total = Math.max(
+    0,
+    Math.round(Number(seconds) || 0)
+  );
+
   const minutes = Math.floor(total / 60);
   const secs = total % 60;
 
@@ -118,7 +131,10 @@ function getCurrentLine() {
 
 function getLineData() {
   const line = getCurrentLine();
-  if (!line) return null;
+
+  if (!line) {
+    return null;
+  }
 
   if (Array.isArray(line)) {
     return line[2] || {};
@@ -130,7 +146,9 @@ function getLineData() {
 function getLineSpeaker() {
   const line = getCurrentLine();
 
-  if (!line) return 'VOCE';
+  if (!line) {
+    return 'VOCE';
+  }
 
   if (Array.isArray(line)) {
     return line[0] || 'VOCE';
@@ -142,7 +160,9 @@ function getLineSpeaker() {
 function getLineText() {
   const line = getCurrentLine();
 
-  if (!line) return '';
+  if (!line) {
+    return '';
+  }
 
   if (Array.isArray(line)) {
     return line[1] || '';
@@ -160,11 +180,15 @@ function getLineEnd() {
 }
 
 function getLineDuration() {
-  return Math.max(0, getLineEnd() - getLineStart());
+  return Math.max(
+    0,
+    getLineEnd() - getLineStart()
+  );
 }
 
 function getLineKey() {
   const data = getLineData();
+
   return data?.id || `line-${state.line}`;
 }
 
@@ -191,11 +215,13 @@ function connect() {
 
   socket.addEventListener('open', () => {
     state.connected = true;
+
     console.log('🔌 WebSocket connesso');
   });
 
   socket.addEventListener('close', () => {
     state.connected = false;
+
     console.log('🔌 WebSocket disconnesso');
 
     if (state.screen !== 'home') {
@@ -205,15 +231,23 @@ function connect() {
 
   socket.addEventListener('error', (error) => {
     state.connected = false;
-    console.error('❌ WebSocket error:', error);
+
+    console.error(
+      '❌ WebSocket error:',
+      error
+    );
   });
 
   socket.addEventListener('message', (event) => {
     try {
       const data = JSON.parse(event.data);
+
       handleServerMessage(data);
     } catch (error) {
-      console.error('Messaggio server non valido:', error);
+      console.error(
+        'Messaggio server non valido:',
+        error
+      );
     }
   });
 
@@ -222,90 +256,172 @@ function connect() {
 
 function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
+    if (!(blob instanceof Blob)) {
+      reject(
+        new Error(
+          'Il valore fornito non è un Blob.'
+        )
+      );
+
+      return;
+    }
+
     const reader = new FileReader();
 
-    reader.onloadend = () => {
-      const result = String(reader.result || '');
-      const commaIndex = result.indexOf(',');
+    reader.onload = () => {
+      try {
+        const result = String(
+          reader.result || ''
+        );
 
-      resolve(
-        commaIndex >= 0
-          ? result.slice(commaIndex + 1)
-          : result
+        const commaIndex =
+          result.indexOf(',');
+
+        resolve(
+          commaIndex >= 0
+            ? result.slice(commaIndex + 1)
+            : result
+        );
+      } catch (error) {
+        reject(error);
+      }
+    };
+
+    reader.onerror = () => {
+      reject(
+        reader.error ||
+        new Error(
+          'Errore durante la conversione audio.'
+        )
       );
     };
 
-    reader.onerror = reject;
     reader.readAsDataURL(blob);
   });
 }
 
-function base64ToBlob(base64, mimeType = 'audio/webm') {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
+function base64ToBlob(
+  base64,
+  mimeType = 'audio/webm'
+) {
+  if (!base64) {
+    return null;
   }
 
-  return new Blob([bytes], {
-    type: mimeType
-  });
+  const binary = atob(base64);
+  const bytes = new Uint8Array(
+    binary.length
+  );
+
+  for (
+    let i = 0;
+    i < binary.length;
+    i++
+  ) {
+    bytes[i] =
+      binary.charCodeAt(i);
+  }
+
+  return new Blob(
+    [bytes],
+    {
+      type: mimeType
+    }
+  );
 }
 
-
-
-function waitForSocketOpen(timeout = 20000) {
-  return new Promise((resolve, reject) => {
-    if (socket?.readyState === WebSocket.OPEN) {
-      resolve(socket);
-      return;
-    }
-
-    const ws =
-      socket?.readyState === WebSocket.CONNECTING
-        ? socket
-        : connect();
-
-    if (!ws) {
-      reject(new Error('WebSocket non disponibile.'));
-      return;
-    }
-
-    const startedAt = Date.now();
-
-    const check = () => {
-      if (ws.readyState === WebSocket.OPEN) {
-        resolve(ws);
-        return;
-      }
-
+function waitForSocketOpen(
+  timeout = 20000
+) {
+  return new Promise(
+    (resolve, reject) => {
       if (
-        ws.readyState === WebSocket.CLOSED ||
-        ws.readyState === WebSocket.CLOSING
+        socket?.readyState ===
+        WebSocket.OPEN
       ) {
-        reject(new Error('Connessione al server chiusa.'));
+        resolve(socket);
         return;
       }
 
-      if (Date.now() - startedAt >= timeout) {
-        reject(new Error('Timeout connessione al server.'));
+      const ws =
+        socket?.readyState ===
+        WebSocket.CONNECTING
+          ? socket
+          : connect();
+
+      if (!ws) {
+        reject(
+          new Error(
+            'WebSocket non disponibile.'
+          )
+        );
+
         return;
       }
 
-      setTimeout(check, 100);
-    };
+      const startedAt = Date.now();
 
-    check();
-  }).catch((error) => {
-    console.error('❌ Connessione WebSocket:', error);
-    toast('Il server non è raggiungibile. Riprova tra poco.');
+      const check = () => {
+        if (
+          ws.readyState ===
+          WebSocket.OPEN
+        ) {
+          resolve(ws);
+          return;
+        }
+
+        if (
+          ws.readyState ===
+            WebSocket.CLOSED ||
+          ws.readyState ===
+            WebSocket.CLOSING
+        ) {
+          reject(
+            new Error(
+              'Connessione al server chiusa.'
+            )
+          );
+
+          return;
+        }
+
+        if (
+          Date.now() - startedAt >=
+          timeout
+        ) {
+          reject(
+            new Error(
+              'Timeout connessione al server.'
+            )
+          );
+
+          return;
+        }
+
+        setTimeout(check, 100);
+      };
+
+      check();
+    }
+  ).catch((error) => {
+    console.error(
+      '❌ Connessione WebSocket:',
+      error
+    );
+
+    toast(
+      'Il server non è raggiungibile. Riprova tra poco.'
+    );
+
     throw error;
   });
 }
 
 function handleServerMessage(data) {
-  console.log('📡 SERVER:', data);
+  console.log(
+    '📡 SERVER:',
+    data
+  );
 
   switch (data.type) {
     case 'CONNECTED':
@@ -316,26 +432,39 @@ function handleServerMessage(data) {
       break;
 
     case 'SCENE_LIBRARY':
-      state.sceneLibrary = Array.isArray(data.scenes)
-        ? data.scenes
-        : [];
+      state.sceneLibrary =
+        Array.isArray(data.scenes)
+          ? data.scenes
+          : [];
 
       renderSceneLibrary();
       break;
 
     case 'ROOM_CREATED':
-      state.room = data.roomCode || '';
-      state.playerId = data.playerId || null;
-      state.hostId = data.hostId || state.playerId || null;
+      state.room =
+        data.roomCode || '';
+
+      state.playerId =
+        data.playerId || null;
+
+      state.hostId =
+        data.hostId ||
+        state.playerId ||
+        null;
 
       updateRoomCode();
       go('lobby');
       break;
 
     case 'ROOM_JOINED':
-      state.room = data.roomCode || '';
-      state.playerId = data.playerId || null;
-      state.hostId = data.hostId || null;
+      state.room =
+        data.roomCode || '';
+
+      state.playerId =
+        data.playerId || null;
+
+      state.hostId =
+        data.hostId || null;
 
       updateRoomCode();
       go('lobby');
@@ -353,18 +482,22 @@ function handleServerMessage(data) {
       if (data.phase) {
         state.phase = data.phase;
       }
+
       break;
 
     case 'VOTE_UPDATE':
-      console.log('🗳️ Voti aggiornati:', data.results);
+      console.log(
+        '🗳️ Voti aggiornati:',
+        data.results
+      );
       break;
 
     case 'RECORDING_ACCEPTED':
-  console.log(
-    '🎙️ Registrazione ricevuta dal server:',
-    data.lineId
-  );
-  break;
+      console.log(
+        '🎙️ Registrazione ricevuta dal server:',
+        data.lineId
+      );
+      break;
 
     case 'RECORDING_UPDATE':
       handleRemoteRecording(data);
@@ -375,8 +508,16 @@ function handleServerMessage(data) {
       break;
 
     case 'ERROR':
-      console.error('❌ Server:', data.message);
-      toast(data.message || 'Errore del server.');
+      console.error(
+        '❌ Server:',
+        data.message
+      );
+
+      toast(
+        data.message ||
+        'Errore del server.'
+      );
+
       break;
 
     case 'PONG':
@@ -391,26 +532,50 @@ function handleServerMessage(data) {
 }
 
 function handleRemoteRecording(data) {
-  if (!data.playerId || !data.lineId || !data.audio) {
+  if (
+    !data.playerId ||
+    !data.lineId ||
+    !data.audio
+  ) {
     return;
   }
 
-  // La nostra registrazione locale è già presente.
-  // Non serve duplicarla.
-  if (data.playerId === state.playerId) {
+  if (
+    data.playerId ===
+    state.playerId
+  ) {
     return;
   }
 
-  if (!state.remoteRecordings[data.playerId]) {
-    state.remoteRecordings[data.playerId] = {};
+  if (
+    !state.remoteRecordings[
+      data.playerId
+    ]
+  ) {
+    state.remoteRecordings[
+      data.playerId
+    ] = {};
   }
 
-  state.remoteRecordings[data.playerId][data.lineId] = {
-    playerId: data.playerId,
-    playerName: data.playerName || 'Giocatore',
-    lineId: data.lineId,
-    mimeType: data.mimeType || 'audio/webm',
-    audio: data.audio
+  state.remoteRecordings[
+    data.playerId
+  ][data.lineId] = {
+    playerId:
+      data.playerId,
+
+    playerName:
+      data.playerName ||
+      'Giocatore',
+
+    lineId:
+      data.lineId,
+
+    mimeType:
+      data.mimeType ||
+      'audio/webm',
+
+    audio:
+      data.audio
   };
 
   console.log(
@@ -421,27 +586,37 @@ function handleRemoteRecording(data) {
 }
 
 function handleRoomState(data) {
-  state.room = data.roomCode || state.room;
-  state.players = Array.isArray(data.players)
-    ? data.players
-    : [];
+  state.room =
+    data.roomCode ||
+    state.room;
 
-  state.hostId = data.hostId || state.hostId;
+  state.players =
+    Array.isArray(data.players)
+      ? data.players
+      : [];
+
+  state.hostId =
+    data.hostId ||
+    state.hostId;
 
   if (data.mode) {
-    state.mode = data.mode;
+    state.mode =
+      data.mode;
   }
 
   if (data.scene) {
-    state.scene = data.scene;
+    state.scene =
+      data.scene;
   }
 
   if (data.sceneData) {
-    state.sceneData = data.sceneData;
+    state.sceneData =
+      data.sceneData;
   }
 
   if (data.phase) {
-    state.phase = data.phase;
+    state.phase =
+      data.phase;
   }
 
   renderPlayers();
@@ -451,66 +626,90 @@ function handleRoomState(data) {
 }
 
 function updateRoomCode() {
-  const label = $('#room-code-label');
+  const label =
+    $('#room-code-label');
 
   if (label) {
-    label.textContent = state.room || '------';
+    label.textContent =
+      state.room ||
+      '------';
   }
 }
 
 function renderPlayers() {
-  const container = $('#players-list');
-  if (!container) return;
+  const container =
+    $('#players-list');
 
-  const count = $('#player-count');
-
-  if (count) {
-    count.textContent = state.players.length;
+  if (!container) {
+    return;
   }
 
-  container.innerHTML = state.players
-    .map((player, index) => {
-      const host =
-        player.id === state.hostId ||
-        player.host === true;
+  const count =
+    $('#player-count');
 
-      return `
-        <div class="player-row">
-          <div
-            class="player-avatar"
-            ${player.color ? `style="background:${escapeHtml(player.color)}"` : ''}
-          >
-            ${escapeHtml(
-              (player.name || `Giocatore ${index + 1}`)
-                .slice(0, 1)
-                .toUpperCase()
-            )}
+  if (count) {
+    count.textContent =
+      state.players.length;
+  }
+
+  container.innerHTML =
+    state.players
+      .map((player, index) => {
+        const host =
+          player.id ===
+            state.hostId ||
+          player.host === true;
+
+        return `
+          <div class="player-row">
+            <div
+              class="player-avatar"
+              ${
+                player.color
+                  ? `style="background:${escapeHtml(player.color)}"`
+                  : ''
+              }
+            >
+              ${escapeHtml(
+                (
+                  player.name ||
+                  `Giocatore ${index + 1}`
+                )
+                  .slice(0, 1)
+                  .toUpperCase()
+              )}
+            </div>
+
+            <div class="player-name">
+              ${escapeHtml(
+                player.name ||
+                `Giocatore ${index + 1}`
+              )}
+            </div>
+
+            ${
+              host
+                ? '<span class="player-host">host</span>'
+                : ''
+            }
           </div>
-
-          <div class="player-name">
-            ${escapeHtml(
-              player.name || `Giocatore ${index + 1}`
-            )}
-          </div>
-
-          ${
-            host
-              ? '<span class="player-host">host</span>'
-              : ''
-          }
-        </div>
-      `;
-    })
-    .join('');
+        `;
+      })
+      .join('');
 }
 
 function renderSceneLibrary() {
-  const container = $('.scene-options');
-  if (!container) return;
+  const container =
+    $('.scene-options');
 
-  const scenes = Array.isArray(state.sceneLibrary)
-    ? state.sceneLibrary
-    : [];
+  if (!container) {
+    return;
+  }
+
+  const scenes =
+    Array.isArray(state.sceneLibrary)
+      ? state.sceneLibrary
+      : [];
 
   if (!scenes.length) {
     container.innerHTML = `
@@ -518,73 +717,110 @@ function renderSceneLibrary() {
         nessuna scena disponibile
       </div>
     `;
+
     return;
   }
 
-  container.innerHTML = scenes
-    .map((item) => {
-      const selected =
-        item.id === state.scene;
+  container.innerHTML =
+    scenes
+      .map((item) => {
+        const selected =
+          item.id === state.scene;
 
-      return `
-        <button
-          class="scene-option ${selected ? 'selected' : ''}"
-          data-scene="${escapeHtml(item.id)}"
-          type="button"
-        >
-          <div class="scene-option-main">
-            <strong>
-              ${escapeHtml(item.title || item.id)}
-            </strong>
+        return `
+          <button
+            class="scene-option ${
+              selected
+                ? 'selected'
+                : ''
+            }"
+            data-scene="${escapeHtml(item.id)}"
+            type="button"
+          >
+            <div class="scene-option-main">
+              <strong>
+                ${escapeHtml(
+                  item.title ||
+                  item.id
+                )}
+              </strong>
 
-            <span>
-              ${escapeHtml(item.category || 'scena')}
+              <span>
+                ${escapeHtml(
+                  item.category ||
+                  'scena'
+                )}
+              </span>
+            </div>
+
+            <span class="scene-duration">
+              ${formatSceneDuration(
+                item.duration
+              )}
             </span>
-          </div>
-
-          <span class="scene-duration">
-            ${formatSceneDuration(item.duration)}
-          </span>
-        </button>
-      `;
-    })
-    .join('');
+          </button>
+        `;
+      })
+      .join('');
 
   container
-    .querySelectorAll('.scene-option')
+    .querySelectorAll(
+      '.scene-option'
+    )
     .forEach((button) => {
-      button.addEventListener('click', () => {
-        selectScene(button.dataset.scene);
-      });
+      button.addEventListener(
+        'click',
+        () => {
+          selectScene(
+            button.dataset.scene
+          );
+        }
+      );
     });
 }
 
 function selectScene(sceneId) {
-  if (!sceneId) return;
+  if (!sceneId) {
+    return;
+  }
 
   if (!isHost()) {
-    toast('Solo l’host può scegliere la scena.');
+    toast(
+      'Solo l’host può scegliere la scena.'
+    );
+
     return;
   }
 
   const selectedScene =
     state.sceneLibrary.find(
-      (item) => item.id === sceneId
+      (item) =>
+        item.id === sceneId
     );
 
   if (!selectedScene) {
-    toast('Scena non disponibile.');
+    toast(
+      'Scena non disponibile.'
+    );
+
     return;
   }
 
-  state.scene = selectedScene.id;
-  state.sceneData = selectedScene;
+  state.scene =
+    selectedScene.id;
+
+  state.sceneData =
+    selectedScene;
 
   renderSceneLibrary();
 
-  send('SET_SCENE', {
-    scene: selectedScene.id
-  });
+  send(
+    'SET_SCENE',
+    {
+      scene:
+        selectedScene.id
+    }
+  );
 
   console.log(
     '➡️ SET_SCENE',
@@ -593,14 +829,17 @@ function selectScene(sceneId) {
 }
 
 function updateModeUI() {
-  $$('.mode-option').forEach((button) => {
-    button.classList.toggle(
-      'selected',
-      button.dataset.mode === state.mode
-    );
-  });
+  $$('.mode-option')
+    .forEach((button) => {
+      button.classList.toggle(
+        'selected',
+        button.dataset.mode ===
+          state.mode
+      );
+    });
 
-  const label = $('#mode-label');
+  const label =
+    $('#mode-label');
 
   if (label) {
     label.textContent =
@@ -613,18 +852,38 @@ function updateModeUI() {
 function handleGameStarted(data) {
   stopFinalMix();
 
-  state.phase = data.phase || 'LISTEN';
-  state.mode = data.mode || state.mode;
-  state.scene = data.scene || state.scene;
-  state.sceneData = data.sceneData || state.sceneData;
+  state.phase =
+    data.phase ||
+    'LISTEN';
+
+  state.mode =
+    data.mode ||
+    state.mode;
+
+  state.scene =
+    data.scene ||
+    state.scene;
+
+  state.sceneData =
+    data.sceneData ||
+    state.sceneData;
+
   state.line = 0;
   state.take = 1;
+
+  cleanupRecordings();
+
   state.recordings = {};
-  state.localRecordingReady = false;
-  state.linePhase = 'LISTEN';
+  state.remoteRecordings = {};
+  state.localRecordingReady =
+    false;
+
+  state.linePhase =
+    'LISTEN';
 
   stopLineTimer();
   stopCurrentRecording();
+  stopReviewAudio();
 
   go('record');
 
@@ -632,16 +891,26 @@ function handleGameStarted(data) {
     .then(() => {
       renderLines();
       updateLine();
-      setPhase('listen');
+      setPhase('LISTEN');
+      startTimer();
+
+      return playCurrentLine();
     })
     .catch((error) => {
-      console.error('Errore caricamento scena:', error);
-      toast('Impossibile caricare la scena.');
+      console.error(
+        'Errore caricamento scena:',
+        error
+      );
+
+      toast(
+        'Impossibile caricare la scena.'
+      );
     });
 }
 
 async function loadSharedScene() {
-  const scene = state.sceneData;
+  const scene =
+    state.sceneData;
 
   if (!scene) {
     throw new Error(
@@ -660,12 +929,13 @@ async function loadSharedScene() {
     scene.riffpack
   );
 
-  const response = await fetch(
-    scene.riffpack,
-    {
-      cache: 'no-store'
-    }
-  );
+  const response =
+    await fetch(
+      scene.riffpack,
+      {
+        cache: 'no-store'
+      }
+    );
 
   if (!response.ok) {
     throw new Error(
@@ -673,33 +943,47 @@ async function loadSharedScene() {
     );
   }
 
-  state.pack = await response.json();
+  state.pack =
+    await response.json();
 
-  if (!Array.isArray(state.pack.lines)) {
+  if (
+    !Array.isArray(
+      state.pack.lines
+    )
+  ) {
     throw new Error(
       'Il RiffPack non contiene lines.'
     );
   }
 
   state.pack.lines =
-    state.pack.lines.map((line) => {
-      if (Array.isArray(line)) {
-        return line;
-      }
+    state.pack.lines.map(
+      (line) => {
+        if (
+          Array.isArray(line)
+        ) {
+          return line;
+        }
 
-      return [
-        line.speaker || 'VOCE',
-        line.text || '',
-        line
-      ];
-    });
+        return [
+          line.speaker ||
+            'VOCE',
+
+          line.text ||
+            '',
+
+          line
+        ];
+      }
+    );
 
   console.log(
     '📦 RiffPack caricato:',
     state.pack
   );
 
-  const video = $('#clip-video');
+  const video =
+    $('#clip-video');
 
   if (!video) {
     throw new Error(
@@ -730,11 +1014,15 @@ async function loadSharedScene() {
   );
 
   video.hidden = false;
-  video.removeAttribute('hidden');
+  video.removeAttribute(
+    'hidden'
+  );
 
   styleClipVideo(video);
 
-  video.src = scene.video;
+  video.src =
+    scene.video;
+
   video.load();
 
   console.log(
@@ -742,7 +1030,9 @@ async function loadSharedScene() {
     video.src
   );
 
-  await waitForVideoReady(video);
+  await waitForVideoReady(
+    video
+  );
 
   video.pause();
   video.currentTime = 0;
@@ -772,7 +1062,9 @@ function waitForVideoReady(
 ) {
   return new Promise(
     (resolve, reject) => {
-      if (video.readyState >= 2) {
+      if (
+        video.readyState >= 2
+      ) {
         resolve();
         return;
       }
@@ -798,8 +1090,12 @@ function waitForVideoReady(
         );
       };
 
-      const finish = (callback) => {
-        if (finished) return;
+      const finish = (
+        callback
+      ) => {
+        if (finished) {
+          return;
+        }
 
         finished = true;
         cleanup();
@@ -821,15 +1117,16 @@ function waitForVideoReady(
         });
       };
 
-      const timer = setTimeout(() => {
-        finish(() => {
-          reject(
-            new Error(
-              'Timeout caricamento video.'
-            )
-          );
-        });
-      }, timeout);
+      const timer =
+        setTimeout(() => {
+          finish(() => {
+            reject(
+              new Error(
+                'Timeout caricamento video.'
+              )
+            );
+          });
+        }, timeout);
 
       video.addEventListener(
         'loadeddata',
@@ -850,77 +1147,102 @@ function waitForVideoReady(
 }
 
 function styleClipVideo(video) {
-  video.style.position = 'absolute';
-  video.style.inset = '0';
-  video.style.width = '100%';
-  video.style.height = '100%';
-  video.style.objectFit = 'cover';
-  video.style.zIndex = '1';
-  video.style.display = 'block';
+  video.style.position =
+    'absolute';
+
+  video.style.inset =
+    '0';
+
+  video.style.width =
+    '100%';
+
+  video.style.height =
+    '100%';
+
+  video.style.objectFit =
+    'cover';
+
+  video.style.zIndex =
+    '1';
+
+  video.style.display =
+    'block';
 }
 
 function renderLines() {
   const container =
     $('#line-list');
 
-  if (!container) return;
+  if (!container) {
+    return;
+  }
 
-  const lines = getLines();
+  const lines =
+    getLines();
 
-  container.innerHTML = lines
-    .map((line, index) => {
-      const speaker =
-        Array.isArray(line)
-          ? line[0]
-          : line.speaker;
+  container.innerHTML =
+    lines
+      .map((line, index) => {
+        const speaker =
+          Array.isArray(line)
+            ? line[0]
+            : line.speaker;
 
-      const text =
-        Array.isArray(line)
-          ? line[1]
-          : line.text;
+        const text =
+          Array.isArray(line)
+            ? line[1]
+            : line.text;
 
-      return `
-        <div
-          class="line-item ${
-            index === state.line
-              ? 'active'
-              : ''
-          }"
-          data-line="${index}"
-        >
-          <span class="line-index">
-            ${index + 1}
-          </span>
-
-          <div class="line-copy">
-            <strong>
-              ${escapeHtml(
-                speaker || 'VOCE'
-              )}
-            </strong>
-
-            <span>
-              ${escapeHtml(
-                text || ''
-              )}
+        return `
+          <div
+            class="line-item ${
+              index === state.line
+                ? 'active'
+                : ''
+            }"
+            data-line="${index}"
+          >
+            <span class="line-index">
+              ${index + 1}
             </span>
+
+            <div class="line-copy">
+              <strong>
+                ${escapeHtml(
+                  speaker ||
+                  'VOCE'
+                )}
+              </strong>
+
+              <span>
+                ${escapeHtml(
+                  text ||
+                  ''
+                )}
+              </span>
+            </div>
           </div>
-        </div>
-      `;
-    })
-    .join('');
+        `;
+      })
+      .join('');
 
   container
-    .querySelectorAll('.line-item')
+    .querySelectorAll(
+      '.line-item'
+    )
     .forEach((item) => {
       item.addEventListener(
         'click',
         async () => {
           const index =
-            Number(item.dataset.line);
+            Number(
+              item.dataset.line
+            );
 
           if (
-            !Number.isInteger(index) ||
+            !Number.isInteger(
+              index
+            ) ||
             index < 0 ||
             index >= lines.length
           ) {
@@ -929,12 +1251,15 @@ function renderLines() {
 
           if (
             state.recordingRequest ||
-            state.linePhase === 'RECORDING'
+            state.linePhase ===
+              'RECORDING'
           ) {
             return;
           }
 
-          state.line = index;
+          state.line =
+            index;
+
           state.localRecordingReady =
             Boolean(
               state.recordings[
@@ -943,6 +1268,7 @@ function renderLines() {
             );
 
           updateLine();
+
           await playCurrentLine();
         }
       );
@@ -950,20 +1276,25 @@ function renderLines() {
 }
 
 function updateLine() {
-  const lines = getLines();
-  const line = getCurrentLine();
+  const lines =
+    getLines();
 
-  if (!line) return;
+  const line =
+    getCurrentLine();
 
-  $$('.line-item').forEach(
-    (item) => {
+  if (!line) {
+    return;
+  }
+
+  $$('.line-item')
+    .forEach((item) => {
       item.classList.toggle(
         'active',
-        Number(item.dataset.line) ===
-          state.line
+        Number(
+          item.dataset.line
+        ) === state.line
       );
-    }
-  );
+    });
 
   const speaker =
     getLineSpeaker();
@@ -1012,9 +1343,10 @@ function updateLine() {
   if (progress) {
     const percentage =
       lines.length > 1
-        ? (state.line /
-            (lines.length - 1)) *
-          100
+        ? (
+            state.line /
+            (lines.length - 1)
+          ) * 100
         : 100;
 
     progress.style.width =
@@ -1050,7 +1382,8 @@ function updateRecordingUI() {
   if (recordButton) {
     recordButton.disabled =
       state.recordingRequest ||
-      state.linePhase === 'REVIEW';
+      state.linePhase ===
+        'REVIEW';
   }
 
   if (finishButton) {
@@ -1067,11 +1400,14 @@ function updateRecordingUI() {
 
   if (label) {
     if (
-      state.linePhase === 'RECORDING'
+      state.linePhase ===
+      'RECORDING'
     ) {
       label.textContent =
         'registrazione in corso…';
-    } else if (hasRecording) {
+    } else if (
+      hasRecording
+    ) {
       label.textContent =
         'rifai questa battuta';
     } else {
@@ -1082,11 +1418,14 @@ function updateRecordingUI() {
 
   if (micStatus) {
     if (
-      state.linePhase === 'RECORDING'
+      state.linePhase ===
+      'RECORDING'
     ) {
       micStatus.textContent =
         '🎙️ registrazione in corso';
-    } else if (hasRecording) {
+    } else if (
+      hasRecording
+    ) {
       micStatus.textContent =
         'registrazione pronta';
     } else {
@@ -1098,8 +1437,9 @@ function updateRecordingUI() {
 
 function setPhase(phase) {
   state.linePhase =
-    String(phase || 'LISTEN')
-      .toUpperCase();
+    String(
+      phase || 'LISTEN'
+    ).toUpperCase();
 
   updateRecordingUI();
 }
@@ -1108,12 +1448,16 @@ async function playCurrentLine() {
   const video =
     $('#clip-video');
 
-  if (!video) return;
+  if (!video) {
+    return;
+  }
 
   const line =
     getLineData();
 
-  if (!line) return;
+  if (!line) {
+    return;
+  }
 
   const start =
     getLineStart();
@@ -1129,12 +1473,14 @@ async function playCurrentLine() {
     toast(
       'Tempi della frase non validi.'
     );
+
     return;
   }
 
   stopLineTimer();
   stopCurrentRecording();
   stopReviewAudio();
+  stopFinalMix();
 
   state.linePhase =
     'LISTEN';
@@ -1142,7 +1488,9 @@ async function playCurrentLine() {
   updateRecordingUI();
 
   video.hidden = false;
-  video.removeAttribute('hidden');
+  video.removeAttribute(
+    'hidden'
+  );
 
   styleClipVideo(video);
 
@@ -1151,7 +1499,8 @@ async function playCurrentLine() {
   video.loop = false;
 
   try {
-    video.currentTime = start;
+    video.currentTime =
+      start;
   } catch {}
 
   const stopAtEnd = () => {
@@ -1160,7 +1509,9 @@ async function playCurrentLine() {
       end - 0.05
     ) {
       video.pause();
-      video.currentTime = start;
+      video.currentTime =
+        start;
+
       stopLineTimer();
     }
   };
@@ -1204,7 +1555,9 @@ async function playCurrentLine() {
 function stopLineTimer() {
   if (state.lineTimer) {
     state.lineTimer.cleanup?.();
-    state.lineTimer = null;
+
+    state.lineTimer =
+      null;
   }
 
   const video =
@@ -1219,12 +1572,16 @@ async function startCurrentLineRecording() {
   const video =
     $('#clip-video');
 
-  if (!video) return;
+  if (!video) {
+    return;
+  }
 
   const line =
     getLineData();
 
-  if (!line) return;
+  if (!line) {
+    return;
+  }
 
   const start =
     getLineStart();
@@ -1240,6 +1597,7 @@ async function startCurrentLineRecording() {
     toast(
       'Durata frase non valida.'
     );
+
     return;
   }
 
@@ -1249,12 +1607,14 @@ async function startCurrentLineRecording() {
     toast(
       'Il browser non supporta il microfono.'
     );
+
     return;
   }
 
   stopLineTimer();
   stopCurrentRecording();
   stopReviewAudio();
+  stopFinalMix();
 
   state.linePhase =
     'RECORDING';
@@ -1270,7 +1630,9 @@ async function startCurrentLineRecording() {
   updateRecordingUI();
 
   video.hidden = false;
-  video.removeAttribute('hidden');
+  video.removeAttribute(
+    'hidden'
+  );
 
   styleClipVideo(video);
 
@@ -1279,17 +1641,19 @@ async function startCurrentLineRecording() {
   video.loop = false;
 
   try {
-    video.currentTime = start;
+    video.currentTime =
+      start;
   } catch {}
 
   let stream;
 
   try {
     stream =
-      await navigator.mediaDevices
-        .getUserMedia({
+      await navigator.mediaDevices.getUserMedia(
+        {
           audio: true
-        });
+        }
+      );
   } catch (error) {
     console.error(
       'Microfono:',
@@ -1318,7 +1682,9 @@ async function startCurrentLineRecording() {
 
   try {
     recorder =
-      new MediaRecorder(stream);
+      new MediaRecorder(
+        stream
+      );
   } catch (error) {
     console.error(
       'MediaRecorder:',
@@ -1348,7 +1714,9 @@ async function startCurrentLineRecording() {
   recorder.addEventListener(
     'dataavailable',
     (event) => {
-      if (event.data?.size) {
+      if (
+        event.data?.size
+      ) {
         state.chunks.push(
           event.data
         );
@@ -1361,7 +1729,9 @@ async function startCurrentLineRecording() {
     () => {
       finishCurrentRecording();
     },
-    { once: true }
+    {
+      once: true
+    }
   );
 
   const stopAtEnd = () => {
@@ -1370,7 +1740,9 @@ async function startCurrentLineRecording() {
       end - 0.05
     ) {
       video.pause();
-      video.currentTime = start;
+
+      video.currentTime =
+        start;
 
       video.removeEventListener(
         'timeupdate',
@@ -1439,7 +1811,9 @@ async function finishCurrentRecording() {
   const key =
     getLineKey();
 
-  if (!state.chunks.length) {
+  if (
+    !state.chunks.length
+  ) {
     state.recordingRequest =
       false;
 
@@ -1459,33 +1833,24 @@ async function finishCurrentRecording() {
   const blob =
     new Blob(
       state.chunks,
-      { type: mimeType }
+      {
+        type: mimeType
+      }
     );
 
-  const line = state.pack?.lines?.[state.line];
+  const line =
+    state.pack?.lines?.[
+      state.line
+    ];
 
-if (line && blob) {
-  try {
-    const audio = await blobToBase64(blob);
-
-    send('SUBMIT_RECORDING', {
-      lineId: line.id,
-      mimeType: blob.type || 'audio/webm',
-      audio
-    });
-
-    console.log(
-      '📤 Registrazione inviata:',
-      line.id
-    );
-  } catch (error) {
-    console.error(
-      '❌ Errore invio registrazione:',
-      error
-    );
-  }
-}
-
+  /*
+   * Salviamo PRIMA il Blob locale.
+   *
+   * Questo è importante:
+   * il playback finale userà direttamente
+   * questo Blob e NON farà mai fetch()
+   * sul relativo blob: URL.
+   */
   const oldRecording =
     state.recordings[key];
 
@@ -1496,7 +1861,9 @@ if (line && blob) {
   }
 
   const url =
-    URL.createObjectURL(blob);
+    URL.createObjectURL(
+      blob
+    );
 
   state.recordings[key] = {
     blob,
@@ -1519,7 +1886,8 @@ if (line && blob) {
   state.linePhase =
     'REVIEW';
 
-  state.recorder = null;
+  state.recorder =
+    null;
 
   stopRecordingStream();
 
@@ -1528,6 +1896,7 @@ if (line && blob) {
 
   if (video) {
     video.pause();
+
     video.muted = true;
     video.defaultMuted = true;
 
@@ -1539,139 +1908,319 @@ if (line && blob) {
 
   updateRecordingUI();
 
+  /*
+   * Invio al server separato dal salvataggio
+   * locale. Se l'invio fallisce, la registrazione
+   * locale continua comunque a funzionare.
+   */
+  if (line && blob) {
+    try {
+      const audio =
+        await blobToBase64(
+          blob
+        );
+
+      const sent =
+        send(
+          'SUBMIT_RECORDING',
+          {
+            lineId:
+              line.id,
+
+            mimeType:
+              blob.type ||
+              'audio/webm',
+
+            audio
+          }
+        );
+
+      if (sent) {
+        console.log(
+          '📤 Registrazione inviata:',
+          line.id
+        );
+      }
+    } catch (error) {
+      console.error(
+        '❌ Errore invio registrazione:',
+        error
+      );
+
+      /*
+       * Non blocchiamo il gioco:
+       * il Blob locale è già stato salvato.
+       */
+    }
+  }
+
+  state.chunks = [];
+
   toast(
     'Registrazione completata.'
   );
-
-  
 }
 
-let finalAudioContext = null;
-let finalSources = [];
-let finalGain = null;
+/* =========================================================
+   FINAL MIX
+   ========================================================= */
 
 function stopFinalMix() {
-  if (state.finalMixSources?.length) {
-    state.finalMixSources.forEach((source) => {
-      try {
-        source.stop();
-      } catch {}
-    });
+  if (
+    state.finalMixSources?.length
+  ) {
+    state.finalMixSources.forEach(
+      (source) => {
+        try {
+          source.stop();
+        } catch {}
+
+        try {
+          source.disconnect();
+        } catch {}
+      }
+    );
   }
 
-  state.finalMixSources = [];
-  state.finalMixPlaying = false;
+  state.finalMixSources =
+    [];
 
-  if (state.finalAudioContext) {
+  state.finalMixPlaying =
+    false;
+
+  if (
+    state.finalAudioContext
+  ) {
     try {
       state.finalAudioContext.close();
     } catch {}
   }
 
-  state.finalAudioContext = null;
+  state.finalAudioContext =
+    null;
 }
 
-async function getRecordingBlob(recording) {
-  if (!recording) return null;
+async function getRecordingBlob(
+  recording
+) {
+  if (!recording) {
+    return null;
+  }
 
-  if (recording instanceof Blob) {
+  /*
+   * CASO PRINCIPALE:
+   * la registrazione è già un Blob.
+   */
+  if (
+    recording instanceof Blob
+  ) {
     return recording;
   }
 
-  if (recording.blob instanceof Blob) {
+  /*
+   * CASO USATO DA state.recordings.
+   */
+  if (
+    recording.blob instanceof Blob
+  ) {
     return recording.blob;
   }
 
-  if (recording.url) {
-    const response = await fetch(recording.url);
-
-    if (!response.ok) {
-      throw new Error('Impossibile recuperare la registrazione.');
-    }
-
-    return await response.blob();
-  }
-
+  /*
+   * NON facciamo fetch() di blob:
+   * URL.
+   *
+   * Un blob URL è locale al documento
+   * e non deve essere richiesto tramite
+   * rete.
+   */
   return null;
 }
 
+async function decodeBlob(
+  audioContext,
+  blob
+) {
+  if (!(blob instanceof Blob)) {
+    throw new Error(
+      'Registrazione non valida.'
+    );
+  }
+
+  const arrayBuffer =
+    await blob.arrayBuffer();
+
+  return await audioContext.decodeAudioData(
+    arrayBuffer.slice(0)
+  );
+}
+
 async function prepareFinalMix() {
-  if (!state.pack?.lines?.length) {
-    throw new Error('RiffPack non disponibile.');
+  if (
+    !state.pack?.lines?.length
+  ) {
+    throw new Error(
+      'RiffPack non disponibile.'
+    );
   }
 
   const AudioContextClass =
-    window.AudioContext || window.webkitAudioContext;
+    window.AudioContext ||
+    window.webkitAudioContext;
 
   if (!AudioContextClass) {
-    throw new Error('Il browser non supporta il mix audio.');
+    throw new Error(
+      'Il browser non supporta il mix audio.'
+    );
   }
 
   stopFinalMix();
 
-  const audioContext = new AudioContextClass();
+  const audioContext =
+    new AudioContextClass();
 
-  state.finalAudioContext = audioContext;
+  state.finalAudioContext =
+    audioContext;
 
   const decoded = [];
 
-  for (const line of state.pack.lines) {
-    const localRecording = state.recordings[line.id];
+  /*
+   * REGISTRAZIONI LOCALI
+   */
+  for (
+    const line of state.pack.lines
+  ) {
+    const lineId =
+      Array.isArray(line)
+        ? line[2]?.id
+        : line.id;
 
-    if (localRecording) {
-      const blob = await getRecordingBlob(localRecording);
-
-      if (blob) {
-        const arrayBuffer = await blob.arrayBuffer();
-
-        const audioBuffer =
-          await audioContext.decodeAudioData(
-            arrayBuffer.slice(0)
-          );
-
-        decoded.push({
-          line,
-          playerId: state.playerId,
-          audioBuffer
-        });
-      }
+    if (!lineId) {
+      continue;
     }
 
-    for (
-      const playerRecordings of Object.values(
+    const recording =
+      state.recordings[lineId];
+
+    if (!recording) {
+      continue;
+    }
+
+    try {
+      /*
+       * Qui viene usato direttamente
+       * recording.blob.
+       *
+       * Nessun fetch(blob:...).
+       */
+      const blob =
+        await getRecordingBlob(
+          recording
+        );
+
+      if (!blob) {
+        continue;
+      }
+
+      const audioBuffer =
+        await decodeBlob(
+          audioContext,
+          blob
+        );
+
+      decoded.push({
+        line,
+        playerId:
+          state.playerId,
+        playerName:
+          'Tu',
+        audioBuffer
+      });
+    } catch (error) {
+      console.error(
+        '❌ Errore decodifica registrazione locale:',
+        lineId,
+        error
+      );
+    }
+  }
+
+  /*
+   * REGISTRAZIONI REMOTE
+   *
+   * Queste arrivano dal server come Base64,
+   * quindi vengono convertite in Blob.
+   */
+  for (
+    const playerRecordings of
+      Object.values(
         state.remoteRecordings
       )
+  ) {
+    for (
+      const line of state.pack.lines
     ) {
+      const lineId =
+        Array.isArray(line)
+          ? line[2]?.id
+          : line.id;
+
+      if (!lineId) {
+        continue;
+      }
+
       const remoteRecording =
-        playerRecordings[line.id];
+        playerRecordings[
+          lineId
+        ];
 
       if (!remoteRecording) {
         continue;
       }
 
-      const blob = base64ToBlob(
-        remoteRecording.audio,
-        remoteRecording.mimeType
-      );
+      try {
+        const blob =
+          base64ToBlob(
+            remoteRecording.audio,
+            remoteRecording.mimeType
+          );
 
-      const arrayBuffer =
-        await blob.arrayBuffer();
+        if (!blob) {
+          continue;
+        }
 
-      const audioBuffer =
-        await audioContext.decodeAudioData(
-          arrayBuffer.slice(0)
+        const audioBuffer =
+          await decodeBlob(
+            audioContext,
+            blob
+          );
+
+        decoded.push({
+          line,
+          playerId:
+            remoteRecording.playerId,
+          playerName:
+            remoteRecording.playerName,
+          audioBuffer
+        });
+      } catch (error) {
+        console.error(
+          '❌ Errore decodifica registrazione remota:',
+          lineId,
+          error
         );
-
-      decoded.push({
-        line,
-        playerId: remoteRecording.playerId,
-        playerName: remoteRecording.playerName,
-        audioBuffer
-      });
+      }
     }
   }
 
   if (!decoded.length) {
+    try {
+      await audioContext.close();
+    } catch {}
+
+    state.finalAudioContext =
+      null;
+
     throw new Error(
       'Non ci sono registrazioni da riprodurre.'
     );
@@ -1684,230 +2233,290 @@ async function prepareFinalMix() {
 }
 
 async function playFinalScene() {
-  const video = $('#clip-video');
-
-  if (!video) {
-    throw new Error('Video della scena non trovato.');
-  }
-
-  const { audioContext, decoded } = await prepareFinalMix();
-
-  video.pause();
-  video.currentTime = 0;
-  video.muted = true;
-
-  await audioContext.resume();
-
-  const startAt = audioContext.currentTime + 0.15;
-
-  state.finalMixSources = [];
-
-  for (const item of decoded) {
-    const source = audioContext.createBufferSource();
-
-    source.buffer = item.audioBuffer;
-
-    source.connect(audioContext.destination);
-
-    const when =
-      startAt + Math.max(0, Number(item.line.start) || 0);
-
-    source.start(when);
-
-    state.finalMixSources.push(source);
-  }
-
-  state.finalMixPlaying = true;
-
-  video.currentTime = 0;
-
-  await video.play();
-
-  video.onended = () => {
-    stopFinalMix();
-  };
-}
-
-async function playFinalScene() {
-  if (!state.pack || !state.sceneData) {
-    toast('Scena non disponibile.');
-    return;
-  }
-
-  const video = $('#clip-video');
-
-  if (!video) {
-    toast('Video non disponibile.');
-    return;
-  }
-
-  stopFinalMix();
-
-  const lines = Array.isArray(state.pack.lines)
-    ? state.pack.lines
-    : [];
-
-  const recordings = state.recordings || {};
-
-  finalAudioContext = new AudioContext();
-  finalGain = finalAudioContext.createGain();
-  finalGain.gain.value = 1;
-  finalGain.connect(finalAudioContext.destination);
-
-  if (finalAudioContext.state === 'suspended') {
-    await finalAudioContext.resume();
-  }
-
-  video.pause();
-  video.currentTime = 0;
-  video.muted = true;
-
-  /*
-   * Carichiamo tutte le registrazioni prima
-   * di far partire il video.
-   */
-  const decodedRecordings = [];
-
-  for (let i = 0; i < lines.length; i++) {
-    const recording = recordings[i];
-
-    if (!recording?.blob && !recording?.url) {
-      continue;
-    }
-
-    try {
-      let arrayBuffer;
-
-      if (recording.blob) {
-        arrayBuffer = await recording.blob.arrayBuffer();
-      } else {
-        const response = await fetch(recording.url);
-        arrayBuffer = await response.arrayBuffer();
-      }
-
-      const audioBuffer =
-        await finalAudioContext.decodeAudioData(arrayBuffer);
-
-      decodedRecordings.push({
-        line: lines[i],
-        audioBuffer
-      });
-    } catch (error) {
-      console.error(
-        `Errore caricamento registrazione ${i}:`,
-        error
-      );
-    }
-  }
-
-  if (!decodedRecordings.length) {
-    toast('Non ci sono registrazioni da riprodurre.');
-    return;
-  }
-
-  /*
-   * Parte il video completo.
-   */
-  await video.play();
-
-  const startedAt = performance.now();
-
-  /*
-   * Ogni registrazione viene fatta partire
-   * esattamente al timestamp della battuta.
-   */
-  decodedRecordings.forEach(({ line, audioBuffer }) => {
-    const delay = Math.max(
-      0,
-      (line.start * 1000)
+  if (
+    !state.pack ||
+    !state.sceneData
+  ) {
+    toast(
+      'Scena non disponibile.'
     );
 
-    const source = finalAudioContext.createBufferSource();
+    return;
+  }
 
-    source.buffer = audioBuffer;
-    source.connect(finalGain);
+  const video =
+    $('#clip-video');
 
-    finalSources.push(source);
+  if (!video) {
+    toast(
+      'Video non disponibile.'
+    );
 
-    setTimeout(() => {
-      if (!finalAudioContext) return;
+    return;
+  }
+
+  try {
+    const {
+      audioContext,
+      decoded
+    } =
+      await prepareFinalMix();
+
+    /*
+     * Video originale completamente muto.
+     */
+    video.pause();
+
+    video.muted = true;
+    video.defaultMuted = true;
+
+    video.loop = false;
+
+    try {
+      video.currentTime = 0;
+    } catch {}
+
+    /*
+     * AudioContext deve essere attivo
+     * prima di programmare le sorgenti.
+     */
+    if (
+      audioContext.state ===
+      'suspended'
+    ) {
+      await audioContext.resume();
+    }
+
+    /*
+     * Piccolo margine per assicurarsi che
+     * il video e l'audio partano insieme.
+     */
+    const startAt =
+      audioContext.currentTime +
+      0.15;
+
+    state.finalMixSources =
+      [];
+
+    /*
+     * OGNI REGISTRAZIONE VIENE PROGRAMMATA
+     * SULLA TIMELINE GLOBALE DELLA SCENA.
+     *
+     * Esempio:
+     *
+     * line 1 start = 0.0
+     * line 2 start = 4.1
+     * line 3 start = 7.8
+     *
+     * quindi le voci partono esattamente
+     * in quei momenti.
+     */
+    for (
+      const item of decoded
+    ) {
+      const source =
+        audioContext.createBufferSource();
+
+      source.buffer =
+        item.audioBuffer;
+
+      source.connect(
+        audioContext.destination
+      );
+
+      const lineStart =
+        Array.isArray(item.line)
+          ? Number(
+              item.line[2]?.start ?? 0
+            )
+          : Number(
+              item.line.start ?? 0
+            );
+
+      const when =
+        startAt +
+        Math.max(
+          0,
+          Number.isFinite(
+            lineStart
+          )
+            ? lineStart
+            : 0
+        );
 
       try {
-        source.start(0);
+        source.start(
+          when
+        );
       } catch (error) {
-        console.warn('Source già avviata:', error);
-      }
-    }, delay);
-  });
+        console.error(
+          'Errore avvio sorgente audio:',
+          error
+        );
 
-  console.log(
-    '🎬 Riproduzione scena finale avviata',
-    {
-      duration: state.sceneData.duration,
-      recordings: decodedRecordings.length,
-      startedAt
+        continue;
+      }
+
+      state.finalMixSources.push(
+        source
+      );
     }
-  );
+
+    if (
+      !state.finalMixSources.length
+    ) {
+      throw new Error(
+        'Nessuna traccia audio valida.'
+      );
+    }
+
+    state.finalMixPlaying =
+      true;
+
+    video.currentTime = 0;
+
+    /*
+     * Il video parte dopo che tutte le
+     * sorgenti sono già state programmate.
+     */
+    await video.play();
+
+    console.log(
+      '🎬 SCENA FINALE AVVIATA',
+      {
+        duration:
+          state.sceneData.duration,
+        recordings:
+          decoded.length
+      }
+    );
+
+    video.onended = () => {
+      stopFinalMix();
+    };
+  } catch (error) {
+    console.error(
+      '❌ Errore scena finale:',
+      error
+    );
+
+    stopFinalMix();
+
+    toast(
+      'Impossibile riprodurre la scena finale.'
+    );
+  }
+}
+
+/* =========================================================
+   ROUND
+   ========================================================= */
+
+async function goToNextLine() {
+  const currentKey =
+    getLineKey();
+
+  const recording =
+    state.recordings[
+      currentKey
+    ];
+
+  if (!recording) {
+    toast(
+      'Registra la frase prima di andare avanti.'
+    );
+
+    return;
+  }
+
+  stopReviewAudio();
+  stopLineTimer();
+
+  const lines =
+    getLines();
+
+  if (
+    state.line >=
+    lines.length - 1
+  ) {
+    finishRound();
+
+    return;
+  }
+
+  state.line += 1;
+  state.take = 1;
+
+  state.localRecordingReady =
+    false;
+
+  state.linePhase =
+    'LISTEN';
+
+  renderLines();
+  updateLine();
+
+  await playCurrentLine();
 }
 
 function finishRound() {
-  state.phase = 'PLAYBACK';
+  stopLineTimer();
+  stopReviewAudio();
+  stopCurrentRecording();
+  stopTimer();
+  stopFinalMix();
 
-  if (state.connected && socket?.readyState === WebSocket.OPEN) {
-    send('SET_PHASE', {
-      phase: 'PLAYBACK'
-    });
+  const video =
+    $('#clip-video');
+
+  if (video) {
+    video.pause();
+
+    video.muted = true;
+    video.defaultMuted = true;
+
+    try {
+      video.currentTime = 0;
+    } catch {}
+  }
+
+  state.linePhase =
+    'DONE';
+
+  updateRecordingUI();
+
+  state.phase =
+    'PLAYBACK';
+
+  if (
+    state.connected &&
+    socket?.readyState ===
+      WebSocket.OPEN
+  ) {
+    send(
+      'SET_PHASE',
+      {
+        phase:
+          'PLAYBACK'
+      }
+    );
   }
 
   go('playback');
 
+  /*
+   * Aspettiamo che la schermata sia stata
+   * effettivamente mostrata prima di avviare
+   * il mix finale.
+   */
   setTimeout(() => {
-    playFinalScene().catch(error => {
-      console.error('Errore playback finale:', error);
-      toast('Impossibile riprodurre la scena finale.');
-    });
-  }, 300);
+    playFinalScene();
+  }, 250);
 }
 
-function stopRecordingStream() {
-  if (!state.recordingStream) {
-    return;
-  }
-
-  state.recordingStream
-    .getTracks()
-    .forEach(
-      (track) => track.stop()
-    );
-
-  state.recordingStream =
-    null;
-}
-
-function stopCurrentRecording() {
-  stopLineTimer();
-
-  const recorder =
-    state.recorder;
-
-  if (
-    recorder &&
-    recorder.state !==
-      'inactive'
-  ) {
-    try {
-      recorder.stop();
-    } catch {}
-  }
-
-  state.recorder =
-    null;
-
-  state.recordingRequest =
-    false;
-
-  stopRecordingStream();
-}
+/* =========================================================
+   REVIEW
+   ========================================================= */
 
 async function playCurrentRecording() {
   stopFinalMix();
@@ -1921,6 +2530,7 @@ async function playCurrentRecording() {
     toast(
       'Non hai ancora registrato questa frase.'
     );
+
     return;
   }
 
@@ -1932,11 +2542,27 @@ async function playCurrentRecording() {
 
   if (video) {
     video.pause();
+
     video.muted = true;
+    video.defaultMuted = true;
+
+    try {
+      video.currentTime =
+        getLineStart();
+    } catch {}
   }
 
   const audio =
-    new Audio(recording.url);
+    new Audio();
+
+  /*
+   * Usiamo direttamente il Blob URL
+   * solo come sorgente del tag Audio.
+   *
+   * Non viene mai fatto fetch(url).
+   */
+  audio.src =
+    recording.url;
 
   state.reviewAudio =
     audio;
@@ -1952,7 +2578,9 @@ async function playCurrentRecording() {
           null;
       }
     },
-    { once: true }
+    {
+      once: true
+    }
   );
 
   try {
@@ -1978,9 +2606,14 @@ function stopReviewAudio() {
     return;
   }
 
-  state.reviewAudio.pause();
-  state.reviewAudio.currentTime =
-    0;
+  try {
+    state.reviewAudio.pause();
+  } catch {}
+
+  try {
+    state.reviewAudio.currentTime =
+      0;
+  } catch {}
 
   state.reviewAudio =
     null;
@@ -2016,83 +2649,9 @@ function redoCurrentRecording() {
   startCurrentLineRecording();
 }
 
-async function goToNextLine() {
-  const currentKey =
-    getLineKey();
-
-  const recording =
-    state.recordings[
-      currentKey
-    ];
-
-  if (!recording) {
-    toast(
-      'Registra la frase prima di andare avanti.'
-    );
-    return;
-  }
-
-  stopReviewAudio();
-  stopLineTimer();
-
-  const lines =
-    getLines();
-
-  if (
-    state.line >=
-    lines.length - 1
-  ) {
-    finishRound();
-    return;
-  }
-
-  state.line += 1;
-  state.take = 1;
-
-  state.localRecordingReady =
-    false;
-
-  state.linePhase =
-    'LISTEN';
-
-  renderLines();
-  updateLine();
-
-  await playCurrentLine();
-}
-
-function finishRound() {
-  stopLineTimer();
-  stopReviewAudio();
-  stopCurrentRecording();
-  stopTimer();
-
-  const video =
-    $('#clip-video');
-
-  if (video) {
-    video.pause();
-    video.muted = true;
-    video.defaultMuted = true;
-  }
-
-  state.linePhase =
-    'DONE';
-
-  updateRecordingUI();
-
-  if (
-    state.connected &&
-    socket?.readyState ===
-      WebSocket.OPEN
-  ) {
-    send('SET_PHASE', {
-      phase: 'PLAYBACK'
-    });
-  }
-
-  go('playback');
-}
+/* =========================================================
+   RESULTS
+   ========================================================= */
 
 function handleResults(data) {
   console.log(
@@ -2101,7 +2660,9 @@ function handleResults(data) {
   );
 
   const ranking =
-    Array.isArray(data.ranking)
+    Array.isArray(
+      data.ranking
+    )
       ? data.ranking
       : [];
 
@@ -2130,6 +2691,10 @@ function handleResults(data) {
 
   go('results');
 }
+
+/* =========================================================
+   TIMER
+   ========================================================= */
 
 function startTimer() {
   stopTimer();
@@ -2185,7 +2750,9 @@ function updateTimer() {
   const element =
     $('#round-timer');
 
-  if (!element) return;
+  if (!element) {
+    return;
+  }
 
   const minutes =
     Math.floor(
@@ -2198,6 +2765,10 @@ function updateTimer() {
   element.textContent =
     `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
+
+/* =========================================================
+   ROOM
+   ========================================================= */
 
 async function createRoom() {
   const input =
@@ -2212,11 +2783,15 @@ async function createRoom() {
 
   ws.send(
     JSON.stringify({
-      type: 'CREATE_ROOM',
+      type:
+        'CREATE_ROOM',
+
       name,
+
       scene:
         state.scene ||
         'generale-hartman',
+
       mode:
         state.mode
     })
@@ -2226,8 +2801,10 @@ async function createRoom() {
     '➡️ CREATE_ROOM',
     {
       name,
-      scene: state.scene,
-      mode: state.mode
+      scene:
+        state.scene,
+      mode:
+        state.mode
     }
   );
 }
@@ -2254,12 +2831,16 @@ async function joinRoom() {
     );
 
     codeInput?.focus();
+
     return;
   }
 
   if (
     roomCode
-      .replace(/[^A-Z0-9]/g, '')
+      .replace(
+        /[^A-Z0-9]/g,
+        ''
+      )
       .length !== 6
   ) {
     toast(
@@ -2267,6 +2848,7 @@ async function joinRoom() {
     );
 
     codeInput?.focus();
+
     return;
   }
 
@@ -2275,7 +2857,9 @@ async function joinRoom() {
 
   ws.send(
     JSON.stringify({
-      type: 'JOIN_ROOM',
+      type:
+        'JOIN_ROOM',
+
       roomCode,
       name
     })
@@ -2295,6 +2879,7 @@ function startRound() {
     toast(
       'Solo l’host può iniziare il round.'
     );
+
     return;
   }
 
@@ -2306,17 +2891,25 @@ function startRound() {
     toast(
       'Connessione al server non pronta.'
     );
+
     return;
   }
 
-  send('START_ROUND');
+  send(
+    'START_ROUND'
+  );
 }
+
+/* =========================================================
+   NAVIGATION
+   ========================================================= */
 
 function setupNavigation() {
   $('#create-room')?.addEventListener(
     'click',
     (event) => {
       event.preventDefault();
+
       createRoom().catch(
         console.error
       );
@@ -2327,6 +2920,7 @@ function setupNavigation() {
     'click',
     (event) => {
       event.preventDefault();
+
       joinRoom().catch(
         console.error
       );
@@ -2337,6 +2931,7 @@ function setupNavigation() {
     'click',
     (event) => {
       event.preventDefault();
+
       startRound();
     }
   );
@@ -2366,8 +2961,8 @@ function setupNavigation() {
     }
   );
 
-  $$('[data-go]').forEach(
-    (button) => {
+  $$('[data-go]')
+    .forEach((button) => {
       button.addEventListener(
         'click',
         (event) => {
@@ -2381,18 +2976,19 @@ function setupNavigation() {
           }
         }
       );
-    }
-  );
+    });
 
-  $$('.mode-option').forEach(
-    (button) => {
+  $$('.mode-option')
+    .forEach((button) => {
       button.addEventListener(
         'click',
         () => {
           const mode =
             button.dataset.mode;
 
-          if (!mode) return;
+          if (!mode) {
+            return;
+          }
 
           state.mode =
             mode;
@@ -2407,84 +3003,115 @@ function setupNavigation() {
           ) {
             send(
               'SET_MODE',
-              { mode }
+              {
+                mode
+              }
             );
           }
         }
       );
-    }
-  );
+    });
 
-  $('#record-button')?.addEventListener(
-    'click',
-    async () => {
-      if (
-        state.linePhase ===
-        'REVIEW'
-      ) {
-        redoCurrentRecording();
-        return;
+  $('#record-button')
+    ?.addEventListener(
+      'click',
+      async () => {
+        if (
+          state.linePhase ===
+          'REVIEW'
+        ) {
+          redoCurrentRecording();
+
+          return;
+        }
+
+        await startCurrentLineRecording();
       }
+    );
 
-      await startCurrentLineRecording();
-    }
-  );
-
-  $('#finish-recording')?.addEventListener(
-    'click',
-    async () => {
-      await goToNextLine();
-    }
-  );
-
-  $('#replay-line')?.addEventListener(
-    'click',
-    async () => {
-      await playCurrentLine();
-    }
-  );
-
-  $('#play-again')?.addEventListener(
-    'click',
-    () => {
-      if (state.room && isHost()) {
-        send('SET_PHASE', {
-          phase: 'LISTEN'
-        });
+  $('#finish-recording')
+    ?.addEventListener(
+      'click',
+      async () => {
+        await goToNextLine();
       }
+    );
 
-      state.line = 0;
-      state.take = 1;
-      state.recordings = {};
-      state.localRecordingReady =
-        false;
+  $('#replay-line')
+    ?.addEventListener(
+      'click',
+      async () => {
+        await playCurrentLine();
+      }
+    );
 
-      go('record');
+  $('#play-again')
+    ?.addEventListener(
+      'click',
+      () => {
+        stopFinalMix();
+        stopReviewAudio();
+        stopCurrentRecording();
+        stopTimer();
 
-      loadSharedScene()
-        .then(() => {
-          renderLines();
-          updateLine();
-          startTimer();
-          playCurrentLine();
-        })
-        .catch((error) => {
-          console.error(
-            error
+        if (
+          state.room &&
+          isHost()
+        ) {
+          send(
+            'SET_PHASE',
+            {
+              phase:
+                'LISTEN'
+            }
           );
-          toast(
-            'Impossibile ricaricare la scena.'
-          );
-        });
-    }
-  );
+        }
+
+        cleanupRecordings();
+
+        state.recordings = {};
+        state.remoteRecordings = {};
+        state.line = 0;
+        state.take = 1;
+        state.localRecordingReady =
+          false;
+        state.linePhase =
+          'LISTEN';
+
+        go('record');
+
+        loadSharedScene()
+          .then(() => {
+            renderLines();
+            updateLine();
+            startTimer();
+
+            return playCurrentLine();
+          })
+          .catch((error) => {
+            console.error(
+              error
+            );
+
+            toast(
+              'Impossibile ricaricare la scena.'
+            );
+          });
+      }
+    );
 }
+
+/* =========================================================
+   VIDEO
+   ========================================================= */
 
 function setupVideoEvents() {
   const video =
     $('#clip-video');
 
-  if (!video) return;
+  if (!video) {
+    return;
+  }
 
   video.addEventListener(
     'loadedmetadata',
@@ -2515,13 +3142,19 @@ function setupVideoEvents() {
   );
 }
 
+/* =========================================================
+   KEYBOARD
+   ========================================================= */
+
 function setupKeyboard() {
   document.addEventListener(
     'keydown',
     async (event) => {
       if (
-        event.key !== 'Enter' ||
-        state.screen !== 'record'
+        event.key !==
+          'Enter' ||
+        state.screen !==
+          'record'
       ) {
         return;
       }
@@ -2553,21 +3186,79 @@ function setupKeyboard() {
   );
 }
 
+/* =========================================================
+   CLEANUP
+   ========================================================= */
+
 function cleanupRecordings() {
   Object.values(
     state.recordings
   ).forEach(
     (recording) => {
-      if (recording?.url) {
-        URL.revokeObjectURL(
-          recording.url
-        );
+      if (
+        recording?.url
+      ) {
+        try {
+          URL.revokeObjectURL(
+            recording.url
+          );
+        } catch {}
       }
     }
   );
 
   state.recordings = {};
 }
+
+function stopRecordingStream() {
+  if (
+    !state.recordingStream
+  ) {
+    return;
+  }
+
+  state.recordingStream
+    .getTracks()
+    .forEach(
+      (track) => {
+        try {
+          track.stop();
+        } catch {}
+      }
+    );
+
+  state.recordingStream =
+    null;
+}
+
+function stopCurrentRecording() {
+  stopLineTimer();
+
+  const recorder =
+    state.recorder;
+
+  if (
+    recorder &&
+    recorder.state !==
+      'inactive'
+  ) {
+    try {
+      recorder.stop();
+    } catch {}
+  }
+
+  state.recorder =
+    null;
+
+  state.recordingRequest =
+    false;
+
+  stopRecordingStream();
+}
+
+/* =========================================================
+   INITIALIZATION
+   ========================================================= */
 
 function initializeApp() {
   setupNavigation();
@@ -2591,7 +3282,9 @@ if (
   document.addEventListener(
     'DOMContentLoaded',
     initializeApp,
-    { once: true }
+    {
+      once: true
+    }
   );
 } else {
   initializeApp();
@@ -2604,6 +3297,7 @@ window.addEventListener(
     stopTimer();
     stopReviewAudio();
     stopCurrentRecording();
+    stopFinalMix();
     cleanupRecordings();
   }
 );
