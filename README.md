@@ -32,3 +32,4 @@ La lobby accetta ora un video locale (`video/*`). Il browser lo riproduce nel ro
 
 Usare film o anime commerciali richiede autorizzazione/licenza del titolare dei diritti. Per il catalogo pubblico del sito useremo clip proprie, pubblico dominio o licenze che consentano modifica e redistribuzione; i file caricati localmente restano invece sul dispositivo dell’utente nel prototipo.
 # riffroom
+# riffroom
