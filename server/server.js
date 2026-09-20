@@ -17,8 +17,8 @@ const SCENES = {
     title: 'Generale Hartman',
     category: 'commedia',
     duration: 28,
-    video: 'https://archive.org/download/generale-hartman_202609/generale-hartman_202609',
-    riffpack: 'https://archive.org/download/riffpack.generale-hartman/riffpack.generale-hartman'
+    video: 'https://archive.org/download/generale-hartman_202609/original-video.mp4',
+    riffpack: 'https://archive.org/download/riffpack.generale-hartman/example.riffpack.json'
   }
 };
 
