@@ -311,49 +311,101 @@ async function handleGameStarted(data) {
   go('record');
   setPhase('listen');
 }
+
 async function loadSharedScene() {
   const scene = state.sceneData;
 
   if (!scene) {
+    console.error('❌ Dati della scena non disponibili');
     toast('Dati della scena non disponibili');
     return;
   }
 
   try {
+    console.log('🎬 Scena caricata:', scene.title);
+    console.log('🎬 URL video ricevuto dal server:', scene.video);
+    console.log('📦 URL RiffPack:', scene.riffpack);
+
+    // 1. Carica il RiffPack
     const response = await fetch(scene.riffpack);
 
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+      throw new Error(`RiffPack HTTP ${response.status}`);
     }
 
     const pack = await response.json();
 
     state.pack = pack;
+
+    // Le battute arrivano dal RiffPack
     lines = Array.isArray(pack.lines) ? pack.lines : [];
 
+    console.log('📦 RiffPack:', pack);
+
+    // 2. Recupera il video
     const video = $('#clip-video');
 
-    if (video && scene.video) {
-      video.src = scene.video;
-      video.muted = true;
-      video.loop = true;
-      video.playsInline = true;
-      video.hidden = false;
-
-      video.load();
-
-      video.addEventListener('loadedmetadata', () => {
-        video.currentTime = 0;
-      }, { once: true });
+    if (!video) {
+      throw new Error('Elemento #clip-video non trovato');
     }
 
+    // Pulizia completa del video precedente
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+
+    // IMPORTANTE:
+    // usiamo SOLO l'URL della scena dal server.
+    // NON usiamo pack.originalVideo o pack.silentVideo.
+    video.src = scene.video;
+
+    video.muted = true;
+    video.defaultMuted = true;
+    video.loop = true;
+    video.playsInline = true;
+    video.hidden = false;
+
+    console.log('🎥 video.src impostato a:', video.src);
+
+    // 3. Quando il video è pronto
+    video.addEventListener('loadedmetadata', () => {
+      console.log('✅ VIDEO CARICATO');
+      console.log('   src:', video.currentSrc);
+      console.log('   durata:', video.duration);
+
+      video.currentTime = 0;
+    }, { once: true });
+
+    video.addEventListener('canplay', () => {
+      console.log('▶️ VIDEO PRONTO ALLA RIPRODUZIONE');
+    }, { once: true });
+
+    // 4. Gestione errori video
+    video.addEventListener('error', () => {
+      console.error('❌ ERRORE VIDEO');
+      console.error('src:', video.src);
+      console.error('currentSrc:', video.currentSrc);
+      console.error('error:', video.error);
+
+      toast('Impossibile caricare il video della scena');
+    }, { once: true });
+
+    // Avvia il caricamento
+    video.load();
+
+    // Mostra il badge "video originale silenziato"
+    if ($('#clip-muted-badge')) {
+      $('#clip-muted-badge').hidden = false;
+    }
+
+    // 5. Aggiorna le battute
     renderLines();
     updateLine();
 
-    console.log('🎬 Scena caricata:', scene.title);
-    console.log('📦 RiffPack:', pack);
+    console.log('🎬 Scena pronta:', scene.title);
+
   } catch (error) {
-    console.error('Errore caricamento scena:', error);
+    console.error('❌ Errore caricamento scena:', error);
     toast('Impossibile caricare la scena');
   }
 }
