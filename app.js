@@ -18,7 +18,8 @@ const state = {
   timer: null,
   seconds: 60,
   effect: 'normale',
-  pack: null
+  pack: null,
+  localRecordingReady: false
 };
 const SERVER_URL =
   location.hostname === 'localhost'
@@ -80,6 +81,18 @@ function updateConnectionStatus() {
     label.textContent = state.connected
       ? 'online'
       : 'disconnesso';
+  }
+}
+function syncLobbyControls() {
+  const isHost = state.playerId === state.hostId;
+
+  const startButton = $('#start-round');
+
+  if (startButton) {
+    startButton.disabled = !isHost;
+    startButton.textContent = isHost
+      ? 'Inizia partita'
+      : 'In attesa dell’host…';
   }
 }
 function handleServerMessage(data) {
@@ -178,7 +191,60 @@ let lines = [
 function go(screen) { $$('.screen').forEach((el) => el.classList.toggle('screen-active', el.dataset.screen === screen)); state.screen = screen; window.scrollTo({ top: 0, behavior: 'smooth' }); }
 function toast(message) { const el = $('#toast'); el.textContent = message; el.classList.add('show'); setTimeout(() => el.classList.remove('show'), 2300); }
 function setSelected(selector, attr, value) { $$(selector).forEach((el) => el.classList.toggle('selected', el.dataset[attr] === value)); }
-function renderPlayers() { $('#player-count').textContent = state.players.length; $('#players-list').innerHTML = state.players.map((p, i) => `<div class="player-row"><span class="avatar" style="background:${p.color}">${p.emoji}</span><div><strong>${p.name}</strong><small>${i === 0 ? 'pronto a dirigere' : 'pronto a doppiare'}</small></div>${p.host ? '<span class="host-badge">HOST</span>' : ''}</div>`).join(''); }
+function renderPlayers() {
+  const container =
+    $('#players-list') ||
+    $('.players-list') ||
+    document.querySelector('[data-players]');
+
+  if (!container) {
+    console.warn('Container giocatori non trovato');
+    return;
+  }
+
+  container.innerHTML = '';
+
+  state.players.forEach(player => {
+    const card = document.createElement('div');
+
+    card.className = 'player-card';
+
+    if (player.id === state.playerId) {
+      card.classList.add('player-me');
+    }
+
+    card.innerHTML = `
+      <div
+        class="player-avatar"
+        style="background:${player.color || '#ffd45c'}"
+      >
+        ${player.emoji || '🎤'}
+      </div>
+
+      <div class="player-info">
+        <strong>${escapeHtml(player.name)}</strong>
+        ${player.host ? '<span class="player-host">HOST</span>' : ''}
+      </div>
+
+      <div class="player-status">
+        <span class="status-dot-small ${
+          player.connected ? 'online' : 'offline'
+        }"></span>
+      </div>
+    `;
+
+    container.appendChild(card);
+  });
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
 function renderLines() { $('#line-list').innerHTML = lines.map((l, i) => `<button class="line-item ${i === state.line ? 'active' : ''} ${state.recordings[i] ? 'done' : ''}" data-line="${i}"><span class="line-number">${state.recordings[i] ? '✓' : `0${i + 1}`}</span><span>${l[1]}</span></button>`).join(''); $$('.line-item').forEach((el) => el.addEventListener('click', () => { state.line = Number(el.dataset.line); renderLines(); updateLine(); })); $('#line-count').textContent = `${state.line + 1} / ${lines.length}`; }
 function updateLine() { $('#speaker-tag').textContent = lines[state.line][0]; $('#line-text').textContent = lines[state.line][1]; $('#meter-label').textContent = state.recordings[state.line] ? 'registrata' : '—'; if ($('#waveform')) renderWaveform(); }
 function startTimer() { clearInterval(state.timer); state.seconds = 60; $('#round-timer').textContent = '01:00'; state.timer = setInterval(() => { state.seconds--; const m = String(Math.floor(state.seconds / 60)).padStart(2, '0'); const s = String(state.seconds % 60).padStart(2, '0'); $('#round-timer').textContent = `${m}:${s}`; if (state.seconds <= 0) { clearInterval(state.timer); toast('Tempo scaduto: si va al playback!'); finishRecording(); } }, 1000); }
@@ -211,7 +277,14 @@ $('#join-room').addEventListener('click', () => {
     roomCode
   });
 });
-$('#start-round').addEventListener('click', () => { $('#mode-label').textContent = state.mode === 'roles' ? 'cast condiviso' : 'ognuno per sé'; $('#record-title').textContent = state.scene === 'space' ? 'Missione spaziale' : state.scene === 'kitchen' ? 'Caos in cucina' : 'Il piano perfetto'; state.line = 0; state.recordings = {}; renderLines(); updateLine(); startTimer(); go('record'); });
+$('#start-round').addEventListener('click', () => {
+  if (state.playerId !== state.hostId) {
+    toast('Solo l’host può iniziare la partita');
+    return;
+  }
+
+  send('START_ROUND');
+});
 
 async function beginRecording() {
   if (state.recorder || state.recordingRequest) return;
