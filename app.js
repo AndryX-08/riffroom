@@ -1,10 +1,5 @@
-const $ = (s) => document.querySelector(s);
-const $$ = (s) => [...document.querySelectorAll(s)];
-
-const SERVER_URL =
-  location.hostname === 'localhost'
-    ? 'ws://localhost:10000'
-    : 'wss://riffroomserver.onrender.com';
+const $ = (selector) => document.querySelector(selector);
+const $$ = (selector) => [...document.querySelectorAll(selector)];
 
 const state = {
   screen: 'home',
@@ -28,25 +23,146 @@ const state = {
   seconds: 60,
   effect: 'normale',
   pack: null,
-  localRecordingReady: false
+  localRecordingReady: false,
+  linePhase: 'LISTEN',
+  lineTimer: null,
+  currentRecordingUrl: null,
+  recordingStream: null
 };
 
+const SERVER_URL =
+  location.hostname === 'localhost'
+    ? 'ws://localhost:10000'
+    : 'wss://riffroomserver.onrender.com';
+
 let socket = null;
-let socketPromise = null;
 
-let lines = [
-  ['MILO', '“Ok, ascoltami bene. Ho un piano.”', null],
-  ['DOT', '“Dimmi che non c’entra un secchio.”', null],
-  ['MILO', '“Tecnicamente… c’entrano due secchi.”', null]
-];
-
-function normalizeRoomCode(value) {
-  return String(value || '')
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, '');
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
 }
 
-function connectSocket() {
+function toast(message) {
+  const existing = $('.toast');
+  if (existing) existing.remove();
+
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.textContent = message;
+  document.body.appendChild(el);
+
+  requestAnimationFrame(() => el.classList.add('show'));
+
+  setTimeout(() => {
+    el.classList.remove('show');
+    setTimeout(() => el.remove(), 250);
+  }, 2500);
+}
+
+function go(screen) {
+  state.screen = screen;
+
+  $$('.screen').forEach((el) => {
+    el.classList.toggle('active', el.dataset.screen === screen);
+  });
+
+  window.scrollTo({
+    top: 0,
+    behavior: 'smooth'
+  });
+}
+
+function send(type, payload = {}) {
+  if (!socket || socket.readyState !== WebSocket.OPEN) {
+    toast('Connessione al server non disponibile.');
+    return false;
+  }
+
+  socket.send(JSON.stringify({
+    type,
+    ...payload
+  }));
+
+  return true;
+}
+
+function formatSceneDuration(seconds) {
+  const total = Math.max(0, Math.round(Number(seconds) || 0));
+  const minutes = Math.floor(total / 60);
+  const secs = total % 60;
+
+  return `${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
+
+function getLines() {
+  return Array.isArray(state.pack?.lines)
+    ? state.pack.lines
+    : [];
+}
+
+function getCurrentLine() {
+  return getLines()[state.line] || null;
+}
+
+function getLineData() {
+  const line = getCurrentLine();
+
+  if (!line) return null;
+
+  if (Array.isArray(line)) {
+    return line[2] || {};
+  }
+
+  return line;
+}
+
+function getLineSpeaker() {
+  const line = getCurrentLine();
+
+  if (!line) return 'VOCE';
+
+  if (Array.isArray(line)) {
+    return line[0] || 'VOCE';
+  }
+
+  return line.speaker || 'VOCE';
+}
+
+function getLineText() {
+  const line = getCurrentLine();
+
+  if (!line) return '';
+
+  if (Array.isArray(line)) {
+    return line[1] || '';
+  }
+
+  return line.text || '';
+}
+
+function getLineStart() {
+  return Number(getLineData()?.start ?? 0);
+}
+
+function getLineEnd() {
+  return Number(getLineData()?.end ?? 0);
+}
+
+function getLineDuration() {
+  return Math.max(0, getLineEnd() - getLineStart());
+}
+
+function getLineKey() {
+  const data = getLineData();
+
+  return data?.id || `line-${state.line}`;
+}
+
+function connect() {
   if (
     socket &&
     (
@@ -54,108 +170,44 @@ function connectSocket() {
       socket.readyState === WebSocket.CONNECTING
     )
   ) {
-    return socketPromise;
+    return;
   }
 
-  socketPromise = new Promise((resolve, reject) => {
-    const ws = new WebSocket(SERVER_URL);
-    socket = ws;
+  socket = new WebSocket(SERVER_URL);
 
-    ws.addEventListener('open', () => {
-      state.connected = true;
-      console.log('🟢 WebSocket connesso:', SERVER_URL);
-      updateConnectionStatus();
-      resolve(ws);
-    });
+  socket.addEventListener('open', () => {
+    state.connected = true;
 
-    ws.addEventListener('message', event => {
-      try {
-        const data = JSON.parse(event.data);
-        handleServerMessage(data);
-      } catch (error) {
-        console.error('Messaggio server non valido:', error);
-      }
-    });
-
-    ws.addEventListener('close', () => {
-      state.connected = false;
-      updateConnectionStatus();
-      console.log('🔴 WebSocket disconnesso');
-      socketPromise = null;
-    });
-
-    ws.addEventListener('error', error => {
-      console.error('WebSocket error:', error);
-      state.connected = false;
-      updateConnectionStatus();
-      reject(error);
-    });
+    send('GET_SCENES');
   });
 
-  return socketPromise;
-}
+  socket.addEventListener('close', () => {
+    state.connected = false;
 
-async function send(type, data = {}) {
-  try {
-    const ws = await connectSocket();
-
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      toast('Connessione al server non disponibile');
-      return false;
+    if (state.screen !== 'home') {
+      toast('Connessione persa.');
     }
+  });
 
-    console.log('📤 SEND:', type, data);
+  socket.addEventListener('error', () => {
+    state.connected = false;
+    toast('Errore di connessione al server.');
+  });
 
-    ws.send(JSON.stringify({
-      type,
-      ...data
-    }));
-
-    return true;
-  } catch (error) {
-    console.error('Impossibile inviare:', error);
-    toast('Impossibile connettersi al server');
-    return false;
-  }
-}
-
-function updateConnectionStatus() {
-  const dot = document.querySelector('.status-dot');
-  const label = document.querySelector('.status-text');
-
-  if (dot) {
-    dot.style.background = state.connected
-      ? '#6ee7a8'
-      : '#ff6b6b';
-  }
-
-  if (label) {
-    label.textContent = state.connected
-      ? 'online'
-      : 'disconnesso';
-  }
+  socket.addEventListener('message', (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      handleServerMessage(data);
+    } catch (error) {
+      console.error('Messaggio server non valido:', error);
+    }
+  });
 }
 
 function handleServerMessage(data) {
-  console.log('📨 SERVER:', data);
+  console.log('📡 SERVER:', data);
 
   switch (data.type) {
-    case 'CONNECTED':
-      console.log('Server WebSocket pronto');
-      break;
-
-    case 'ROOM_CREATED':
-      handleRoomCreated(data);
-      break;
-
-    case 'ROOM_JOINED':
-      handleRoomJoined(data);
-      break;
-
-    case 'ROOM_STATE':
-      handleRoomState(data);
-      break;
-
     case 'SCENE_LIBRARY':
       state.sceneLibrary = Array.isArray(data.scenes)
         ? data.scenes
@@ -164,85 +216,59 @@ function handleServerMessage(data) {
       renderSceneLibrary();
       break;
 
+    case 'ROOM_CREATED':
+      state.room = data.room || '';
+      state.playerId = data.playerId || null;
+      state.hostId = data.hostId || state.playerId || null;
+
+      if (data.scene) {
+        state.scene = data.scene;
+      }
+
+      updateRoomCode();
+      go('lobby');
+      break;
+
+    case 'ROOM_JOINED':
+      state.room = data.room || state.room;
+      state.playerId = data.playerId || state.playerId;
+      state.hostId = data.hostId || state.hostId;
+
+      updateRoomCode();
+      go('lobby');
+      break;
+
+    case 'ROOM_STATE':
+      handleRoomState(data);
+      break;
+
     case 'GAME_STARTED':
       handleGameStarted(data);
       break;
 
     case 'PHASE_CHANGED':
-      setPhase(data.phase);
-      break;
-
-    case 'VOTE_UPDATE':
+      if (data.phase) {
+        state.phase = data.phase;
+        setPhase(data.phase.toLowerCase());
+      }
       break;
 
     case 'RESULTS':
       handleResults(data);
       break;
 
-    case 'PONG':
-      break;
-
-    case 'ERROR':
-      toast(data.message || 'Errore del server');
-      console.error('Server error:', data);
-      break;
-
     default:
-      console.log(
-        'Evento server non gestito:',
-        data.type
-      );
+      console.log('Evento server non gestito:', data);
   }
-}
-
-function handleRoomCreated(data) {
-  state.room = data.roomCode;
-  state.playerId = data.playerId;
-  state.hostId = data.hostId;
-
-  if ($('#room-code-label')) {
-    $('#room-code-label').textContent = state.room;
-  }
-
-  console.log('🏠 STANZA CREATA:', state.room);
-
-  go('lobby');
-  syncLobbyControls();
-  renderSceneLibrary();
-}
-
-function handleRoomJoined(data) {
-  state.room = data.roomCode;
-  state.playerId = data.playerId;
-  state.hostId = data.hostId;
-
-  if ($('#room-code-label')) {
-    $('#room-code-label').textContent = state.room;
-  }
-
-  console.log('🚪 Entrato nella stanza:', state.room);
-
-  go('lobby');
-  syncLobbyControls();
-  renderSceneLibrary();
 }
 
 function handleRoomState(data) {
-  if (data.roomCode) {
-    state.room = data.roomCode;
-  }
+  state.room = data.room || state.room;
+  state.players = Array.isArray(data.players)
+    ? data.players
+    : [];
 
-  if (data.hostId) {
-    state.hostId = data.hostId;
-  }
-
-  if (Array.isArray(data.players)) {
-    state.players = data.players;
-  }
-
-  if (data.mode) {
-    state.mode = data.mode;
-  }
+  state.hostId = data.hostId || state.hostId;
 
   if (data.scene) {
     state.scene = data.scene;
@@ -252,1658 +278,1453 @@ function handleRoomState(data) {
     state.sceneData = data.sceneData;
   }
 
-  if (data.phase) {
-    state.phase = data.phase;
-  }
-
-  if ($('#room-code-label')) {
-    $('#room-code-label').textContent = state.room;
-  }
-
   renderPlayers();
   renderSceneLibrary();
-  syncLobbyControls();
+  updateRoomCode();
+}
+
+function updateRoomCode() {
+  const label = $('#room-code-label');
+
+  if (label && state.room) {
+    label.textContent = state.room;
+  }
+}
+
+function renderPlayers() {
+  const container = $('#players-list');
+  if (!container) return;
+
+  const count = $('#player-count');
+
+  if (count) {
+    count.textContent = state.players.length;
+  }
+
+  container.innerHTML = state.players
+    .map((player, index) => {
+      const isHost =
+        player.id === state.hostId ||
+        player.host === true;
+
+      return `
+        <div class="player-row">
+          <div class="player-avatar">
+            ${escapeHtml(
+              (player.name || `Giocatore ${index + 1}`)
+                .slice(0, 1)
+                .toUpperCase()
+            )}
+          </div>
+          <div class="player-name">
+            ${escapeHtml(player.name || `Giocatore ${index + 1}`)}
+          </div>
+          ${
+            isHost
+              ? '<span class="player-host">host</span>'
+              : ''
+          }
+        </div>
+      `;
+    })
+    .join('');
 }
 
 function renderSceneLibrary() {
   const container = $('.scene-options');
 
-  if (!container) {
-    return;
-  }
+  if (!container) return;
 
   if (!state.sceneLibrary.length) {
-    container.innerHTML =
-      '<div class="scene-empty">Nessuna scena disponibile.</div>';
+    container.innerHTML = `
+      <div class="empty-state">
+        nessuna scena disponibile
+      </div>
+    `;
     return;
   }
 
   const isHost =
-    !!state.playerId &&
-    !!state.hostId &&
+    !state.hostId ||
     state.playerId === state.hostId;
 
-  container.innerHTML = state.sceneLibrary.map(scene => `
-    <button
-      type="button"
-      class="scene-option ${scene.id === state.scene ? 'selected' : ''}"
-      data-scene="${escapeHtml(scene.id)}"
-      ${isHost ? '' : 'disabled'}
-    >
-      <div class="mini-scene scene-pink">
-        <span>✦</span>
-        <span>◉</span>
-      </div>
-      <strong>${escapeHtml(scene.title)}</strong>
-      <small>${formatSceneDuration(scene.duration)} · ${escapeHtml(scene.category)}</small>
-    </button>
-  `).join('');
+  container.innerHTML = state.sceneLibrary
+    .map((scene) => {
+      const selected = scene.id === state.scene;
 
-  container.querySelectorAll('.scene-option').forEach(button => {
+      return `
+        <button
+          class="scene-option ${selected ? 'selected' : ''}"
+          data-scene="${escapeHtml(scene.id)}"
+          ${isHost ? '' : 'disabled'}
+        >
+          <span class="scene-option-title">
+            ${escapeHtml(scene.title || scene.id)}
+          </span>
+          <small>
+            ${formatSceneDuration(scene.duration)}
+            · ${escapeHtml(scene.category || 'scena')}
+          </small>
+        </button>
+      `;
+    })
+    .join('');
+
+  $$('.scene-option').forEach((button) => {
     button.addEventListener('click', () => {
-      if (state.playerId !== state.hostId) {
-        toast('Solo l’host può scegliere la scena');
-        return;
-      }
+      if (!isHost) return;
 
       const sceneId = button.dataset.scene;
 
       state.scene = sceneId;
 
-      setSelected(
-        '.scene-option',
-        'scene',
-        state.scene
-      );
+      $$('.scene-option').forEach((item) => {
+        item.classList.toggle(
+          'selected',
+          item.dataset.scene === sceneId
+        );
+      });
 
-      send('SET_SCENE', {
+      send('SELECT_SCENE', {
+        room: state.room,
         scene: sceneId
       });
     });
   });
 }
 
-function formatSceneDuration(seconds) {
-  const value = Number(seconds) || 0;
-  const minutes = Math.floor(value / 60);
-  const remaining = Math.floor(value % 60);
-
-  return `${String(minutes).padStart(2, '0')}:${String(remaining).padStart(2, '0')}`;
-}
-
-async function handleGameStarted(data) {
+function handleGameStarted(data) {
   state.phase = data.phase || 'LISTEN';
   state.mode = data.mode || state.mode;
   state.scene = data.scene || state.scene;
   state.sceneData = data.sceneData || state.sceneData;
-
   state.line = 0;
   state.take = 1;
   state.recordings = {};
   state.localRecordingReady = false;
+  state.linePhase = 'LISTEN';
 
-  if ($('#mode-label')) {
-    $('#mode-label').textContent =
-      state.mode === 'roles'
-        ? 'cast condiviso'
-        : 'ognuno per sé';
-  }
-
-  if ($('#record-title')) {
-    $('#record-title').textContent =
-      state.sceneData?.title || 'Dub Together';
-  }
-
-  console.log('🎮 PARTITA INIZIATA');
-  console.log('🎬 SCENA:', state.sceneData);
+  stopLineTimer();
+  stopCurrentRecording();
 
   go('record');
 
-  await loadSharedScene();
-
-  renderLines();
-  updateLine();
-
-  setPhase('listen');
+  loadSharedScene()
+    .then(() => {
+      renderLines();
+      updateLine();
+      setPhase('listen');
+    })
+    .catch((error) => {
+      console.error('Errore caricamento scena:', error);
+      toast('Impossibile caricare la scena.');
+    });
 }
 
 async function loadSharedScene() {
   const scene = state.sceneData;
 
   if (!scene) {
-    console.error('❌ Dati della scena non disponibili');
-    toast('Dati della scena non disponibili');
-    return false;
-  }
-
-  if (!scene.video) {
-    console.error('❌ La scena non contiene un URL video:', scene);
-    toast('La scena non contiene un video');
-    return false;
+    throw new Error('Dati scena mancanti.');
   }
 
   if (!scene.riffpack) {
-    console.error('❌ La scena non contiene un RiffPack:', scene);
-    toast('La scena non contiene un RiffPack');
-    return false;
+    throw new Error('RiffPack non configurato.');
   }
 
-  try {
-    console.log('🎬 Caricamento scena:', scene.title);
-    console.log('🎥 URL video:', scene.video);
-    console.log('📦 URL RiffPack:', scene.riffpack);
+  console.log('📦 Caricamento RiffPack:', scene.riffpack);
 
-    // ─────────────────────────────
-    // 1. CARICAMENTO RIFFPACK
-    // ─────────────────────────────
+  const response = await fetch(scene.riffpack, {
+    cache: 'no-store'
+  });
 
-    const response = await fetch(scene.riffpack, {
-      cache: 'no-store'
-    });
-
-    if (!response.ok) {
-      throw new Error(
-        `RiffPack HTTP ${response.status}`
-      );
-    }
-
-    const pack = await response.json();
-
-    if (pack.format !== 'riffpack') {
-      throw new Error('Formato RiffPack non valido');
-    }
-
-    state.pack = pack;
-
-    // Convertiamo gli oggetti RiffPack
-    // nel formato usato dal resto dell'app:
-    // [speaker, text, originalLine]
-    lines = Array.isArray(pack.lines)
-      ? pack.lines.map(line => [
-          line.speaker || 'VOCE',
-          line.text || '',
-          line
-        ])
-      : [];
-
-    console.log('📦 RiffPack:', pack);
-    console.log('🗣️ Battute caricate:', lines);
-
-    // ─────────────────────────────
-    // 2. VIDEO CONDIVISO
-    // ─────────────────────────────
-
-    const video = $('#clip-video');
-
-    if (!video) {
-      throw new Error(
-        'Elemento #clip-video non trovato'
-      );
-    }
-
-    // Stop del video precedente
-    video.pause();
-
-    // Eliminiamo qualsiasi vecchio source
-    video.removeAttribute('src');
-
-    video.load();
-
-    // IMPORTANTE:
-    // il video viene SEMPRE dalla scena.
-    // Non usiamo:
-    // pack.originalVideo
-    // pack.silentVideo
-    // localClipUrl
-    video.src = scene.video;
-
-    video.muted = true;
-    video.defaultMuted = true;
-    video.loop = true;
-    video.playsInline = true;
-    video.setAttribute('playsinline', '');
-    video.preload = 'auto';
-    video.hidden = false;
-
-    styleClipVideo(video);
-
-    console.log(
-      '🎥 video.src impostato a:',
-      video.src
+  if (!response.ok) {
+    throw new Error(
+      `RiffPack HTTP ${response.status}`
     );
+  }
 
-    // ─────────────────────────────
-    // 3. EVENTI VIDEO
-    // ─────────────────────────────
+  state.pack = await response.json();
+
+  console.log('📦 RiffPack:', state.pack);
+
+  const lines = Array.isArray(state.pack.lines)
+    ? state.pack.lines
+    : [];
+
+  state.pack.lines = lines.map((line) => {
+    if (Array.isArray(line)) {
+      return line;
+    }
+
+    return [
+      line.speaker || 'VOCE',
+      line.text || '',
+      line
+    ];
+  });
+
+  const video = $('#clip-video');
+
+  if (!video) {
+    throw new Error('Elemento #clip-video non trovato.');
+  }
+
+  stopLineTimer();
+
+  video.pause();
+  video.removeAttribute('src');
+  video.load();
+
+  video.preload = 'auto';
+  video.loop = false;
+  video.muted = true;
+  video.defaultMuted = true;
+  video.playsInline = true;
+
+  video.setAttribute('playsinline', '');
+  video.setAttribute('webkit-playsinline', '');
+
+  video.hidden = false;
+  video.removeAttribute('hidden');
+
+  styleClipVideo(video);
+
+  video.addEventListener('error', () => {
+    console.error(
+      '❌ Errore video:',
+      video.error
+    );
+  });
+
+  video.src = scene.video;
+
+  console.log(
+    '🎥 video.src impostato a:',
+    video.src
+  );
+
+  video.load();
+
+  await waitForVideoReady(video);
+
+  video.pause();
+  video.currentTime = 0;
+  video.muted = true;
+
+  video.hidden = false;
+  video.removeAttribute('hidden');
+
+  styleClipVideo(video);
+
+  console.log('🎬 Scena pronta:', scene.title);
+  console.log('✅ VIDEO CARICATO');
+  console.log('src:', video.currentSrc || video.src);
+
+  const badge = $('#clip-muted-badge');
+
+  if (badge) {
+    badge.textContent = 'originale pronto · scena sincronizzata';
+    badge.hidden = false;
+  }
+
+  return state.pack;
+}
+
+function waitForVideoReady(video, timeout = 20000) {
+  return new Promise((resolve, reject) => {
+    if (video.readyState >= 2) {
+      resolve();
+      return;
+    }
+
+    let finished = false;
+
+    const cleanup = () => {
+      clearTimeout(timer);
+      video.removeEventListener('loadeddata', onReady);
+      video.removeEventListener('canplay', onReady);
+      video.removeEventListener('error', onError);
+    };
+
+    const finish = (callback) => {
+      if (finished) return;
+
+      finished = true;
+      cleanup();
+      callback();
+    };
+
+    const onReady = () => {
+      finish(resolve);
+    };
+
+    const onError = () => {
+      finish(() => {
+        reject(
+          video.error ||
+          new Error('Errore caricamento video.')
+        );
+      });
+    };
+
+    const timer = setTimeout(() => {
+      finish(() => {
+        reject(
+          new Error(
+            'Timeout durante il caricamento del video.'
+          )
+        );
+      });
+    }, timeout);
 
     video.addEventListener(
-      'loadedmetadata',
-      () => {
-        console.log('✅ VIDEO CARICATO');
-        console.log(
-          '   src:',
-          video.currentSrc
-        );
-        console.log(
-          '   durata:',
-          video.duration
-        );
-        console.log(
-          '   readyState:',
-          video.readyState
-        );
-
-        video.currentTime = 0;
-      },
-      { once: true }
+      'loadeddata',
+      onReady
     );
 
     video.addEventListener(
       'canplay',
-      () => {
-        console.log(
-          '▶️ VIDEO PRONTO ALLA RIPRODUZIONE'
-        );
-
-        console.log(
-          '   currentSrc:',
-          video.currentSrc
-        );
-
-        console.log(
-          '   readyState:',
-          video.readyState
-        );
-      },
-      { once: true }
+      onReady
     );
 
     video.addEventListener(
       'error',
-      () => {
-        console.error('❌ ERRORE VIDEO');
-        console.error(
-          'src:',
-          video.src
-        );
-        console.error(
-          'currentSrc:',
-          video.currentSrc
-        );
-        console.error(
-          'error:',
-          video.error
-        );
-      },
-      { once: true }
-    );
-
-    // Avvia il caricamento
-    video.load();
-
-    if ($('#clip-muted-badge')) {
-      $('#clip-muted-badge').hidden = false;
-    }
-
-    if ($('#record-title')) {
-      $('#record-title').textContent =
-        scene.title || pack.title || 'Dub Together';
-    }
-
-    renderLines();
-    updateLine();
-    renderWaveform();
-
-    console.log(
-      '🎬 Scena pronta:',
-      scene.title
-    );
-
-    return true;
-
-  } catch (error) {
-    console.error(
-      '❌ Errore caricamento scena:',
-      error
-    );
-
-    toast(
-      'Impossibile caricare la scena'
-    );
-
-    return false;
-  }
-}
-
-function handleResults(data) {
-  const ranking = Array.isArray(data.ranking)
-    ? data.ranking
-    : [];
-
-  if (!ranking.length) {
-    return;
-  }
-
-  const winner = ranking[0];
-
-  if ($('#winner-name')) {
-    $('#winner-name').textContent =
-      winner.name;
-  }
-
-  go('results');
-}
-
-function syncLobbyControls() {
-  const isHost =
-    !!state.playerId &&
-    !!state.hostId &&
-    state.playerId === state.hostId;
-
-  const startButton =
-    $('#start-round');
-
-  if (!startButton) {
-    return;
-  }
-
-  startButton.disabled = !isHost;
-
-  startButton.textContent = isHost
-    ? 'Inizia partita'
-    : 'In attesa dell’host…';
-}
-
-function go(screen) {
-  $$('.screen').forEach(el => {
-    el.classList.toggle(
-      'screen-active',
-      el.dataset.screen === screen
-    );
-  });
-
-  state.screen = screen;
-
-  window.scrollTo({
-    top: 0,
-    behavior: 'smooth'
-  });
-}
-
-function toast(message) {
-  const el = $('#toast');
-
-  if (!el) {
-    console.log(message);
-    return;
-  }
-
-  el.textContent = message;
-  el.classList.add('show');
-
-  setTimeout(() => {
-    el.classList.remove('show');
-  }, 2300);
-}
-
-function setSelected(
-  selector,
-  attr,
-  value
-) {
-  $$(selector).forEach(el => {
-    el.classList.toggle(
-      'selected',
-      el.dataset[attr] === value
+      onError
     );
   });
 }
 
-function renderPlayers() {
-  const container =
-    $('#players-list') ||
-    $('.players-list') ||
-    document.querySelector('[data-players]');
-
-  if (!container) {
-    console.warn(
-      'Container giocatori non trovato'
-    );
-    return;
-  }
-
-  container.innerHTML = '';
-
-  state.players.forEach(player => {
-    const card =
-      document.createElement('div');
-
-    card.className =
-      'player-card';
-
-    if (player.id === state.playerId) {
-      card.classList.add(
-        'player-me'
-      );
-    }
-
-    card.innerHTML = `
-      <div
-        class="player-avatar"
-        style="background:${player.color || '#ffd45c'}"
-      >
-        ${player.emoji || '🎤'}
-      </div>
-      <div class="player-info">
-        <strong>${escapeHtml(player.name)}</strong>
-        ${
-          player.host
-            ? '<span class="player-host">HOST</span>'
-            : ''
-        }
-      </div>
-      <div class="player-status">
-        <span class="status-dot-small ${
-          player.connected
-            ? 'online'
-            : 'offline'
-        }"></span>
-      </div>
-    `;
-
-    container.appendChild(card);
-  });
-
-  const count =
-    $('#player-count');
-
-  if (count) {
-    count.textContent =
-      state.players.length;
-  }
-
-  syncLobbyControls();
-}
-
-function escapeHtml(value) {
-  return String(value)
-    .replaceAll(
-      '&',
-      '&amp;'
-    )
-    .replaceAll(
-      '<',
-      '&lt;'
-    )
-    .replaceAll(
-      '>',
-      '&gt;'
-    )
-    .replaceAll(
-      '"',
-      '&quot;'
-    )
-    .replaceAll(
-      "'",
-      '&#039;'
-    );
+function styleClipVideo(video) {
+  video.style.position = 'absolute';
+  video.style.inset = '0';
+  video.style.width = '100%';
+  video.style.height = '100%';
+  video.style.objectFit = 'cover';
+  video.style.zIndex = '1';
+  video.style.display = 'block';
 }
 
 function renderLines() {
-  const list =
-    $('#line-list');
+  const container =
+    $('#line-list') ||
+    $('.line-list') ||
+    $('#lines');
 
-  if (!list) {
+  if (!container) {
+    renderWaveform();
     return;
   }
 
-  list.innerHTML =
-    lines.map((line, index) => `
-      <button
-        type="button"
-        class="line-item ${
-          index === state.line
-            ? 'active'
-            : ''
-        } ${
-          state.recordings[index]
-            ? 'done'
-            : ''
-        }"
-        data-line="${index}"
-      >
-        <span class="line-number">
-          ${
-            state.recordings[index]
-              ? '✓'
-              : String(index + 1).padStart(2, '0')
-          }
-        </span>
-        <span>${escapeHtml(line[1])}</span>
-      </button>
-    `).join('');
+  const lines = getLines();
 
-  $$('.line-item').forEach(el => {
-    el.addEventListener(
-      'click',
-      () => {
-        state.line =
-          Number(el.dataset.line);
+  container.innerHTML = lines
+    .map((line, index) => {
+      const speaker = Array.isArray(line)
+        ? line[0]
+        : line.speaker;
 
-        renderLines();
-        updateLine();
-      }
-    );
-  });
+      const text = Array.isArray(line)
+        ? line[1]
+        : line.text;
 
-  if ($('#line-count')) {
-    $('#line-count').textContent =
-      `${state.line + 1} / ${lines.length}`;
-  }
+      const active = index === state.line;
+
+      return `
+        <div
+          class="line-item ${active ? 'active' : ''}"
+          data-line="${index}"
+        >
+          <span class="line-index">${index + 1}</span>
+          <div class="line-copy">
+            <strong>${escapeHtml(speaker || 'VOCE')}</strong>
+            <span>${escapeHtml(text || '')}</span>
+          </div>
+        </div>
+      `;
+    })
+    .join('');
+
+  renderWaveform();
 }
 
 function updateLine() {
-  if (!lines[state.line]) {
-    return;
-  }
+  const lines = getLines();
+  const line = getCurrentLine();
 
-  if ($('#speaker-tag')) {
-    $('#speaker-tag').textContent =
-      lines[state.line][0];
-  }
+  if (!line) return;
 
-  if ($('#line-text')) {
-    $('#line-text').textContent =
-      lines[state.line][1];
-  }
-
-  if ($('#meter-label')) {
-    $('#meter-label').textContent =
-      state.recordings[state.line]
-        ? 'registrata'
-        : '—';
-  }
-
-  if ($('#waveform')) {
-    renderWaveform();
-  }
-}
-
-function startTimer() {
-  clearInterval(state.timer);
-
-  state.seconds = 60;
-
-  if ($('#round-timer')) {
-    $('#round-timer').textContent =
-      '01:00';
-  }
-
-  state.timer =
-    setInterval(() => {
-      state.seconds--;
-
-      const minutes =
-        String(
-          Math.floor(
-            state.seconds / 60
-          )
-        ).padStart(2, '0');
-
-      const seconds =
-        String(
-          state.seconds % 60
-        ).padStart(2, '0');
-
-      if ($('#round-timer')) {
-        $('#round-timer').textContent =
-          `${minutes}:${seconds}`;
-      }
-
-      if (state.seconds <= 0) {
-        clearInterval(
-          state.timer
-        );
-
-        toast(
-          'Tempo scaduto: si va al playback!'
-        );
-
-        finishRecording();
-      }
-    }, 1000);
-}
-
-function renderVotes() {
-  const container =
-    $('#vote-options');
-
-  if (!container) {
-    return;
-  }
-
-  const players =
-    state.players;
-
-  container.innerHTML =
-    players.map((player, index) => `
-      <label class="vote-option ${
-        index === 0
-          ? 'selected'
-          : ''
-      }">
-        <input
-          type="radio"
-          name="vote"
-          value="${escapeHtml(player.id)}"
-          ${
-            index === 0
-              ? 'checked'
-              : ''
-          }
-        />
-        <span>
-          ${escapeHtml(player.name)}
-          ${
-            index === 0
-              ? ' · la tua versione'
-              : ''
-          }
-        </span>
-      </label>
-    `).join('');
-
-  $$('.vote-option').forEach(el => {
-    el.addEventListener(
-      'click',
-      () => {
-        $$('.vote-option').forEach(v =>
-          v.classList.remove(
-            'selected'
-          )
-        );
-
-        el.classList.add(
-          'selected'
-        );
-      }
+  $$('.line-item').forEach((item) => {
+    item.classList.toggle(
+      'active',
+      Number(item.dataset.line) === state.line
     );
   });
 
-  if ($('#take-total')) {
-    $('#take-total').textContent =
-      Math.max(
-        players.length,
-        1
-      );
+  const speaker = getLineSpeaker();
+  const text = getLineText();
+
+  const speakerElements = $$('#line-speaker');
+  speakerElements.forEach((element) => {
+    element.textContent = speaker;
+  });
+
+  const textElements = $$('#line-text');
+  textElements.forEach((element) => {
+    element.textContent = text;
+  });
+
+  const number = $('#line-number');
+
+  if (number) {
+    number.textContent =
+      `${state.line + 1}/${lines.length}`;
   }
+
+  const start = getLineStart();
+  const end = getLineEnd();
+
+  const timing = $('#line-timing');
+
+  if (timing) {
+    timing.textContent =
+      `${start.toFixed(1)}s → ${end.toFixed(1)}s`;
+  }
+
+  renderWaveform();
+  updateRecordingUI();
 }
 
-$$('[data-go]').forEach(el => {
-  el.addEventListener(
-    'click',
-    () => {
-      go(el.dataset.go);
-    }
-  );
-});
+function renderWaveform() {
+  const container = $('#waveform');
 
-$$('.mode-option').forEach(el => {
-  el.addEventListener(
-    'click',
-    () => {
-      state.mode =
-        el.dataset.mode;
+  if (!container) return;
 
-      setSelected(
-        '.mode-option',
-        'mode',
-        state.mode
-      );
+  const data = getLineData();
 
-      if (
-        state.playerId ===
-        state.hostId
-      ) {
-        send(
-          'SET_MODE',
-          {
-            mode: state.mode
-          }
-        );
-      }
-    }
-  );
-});
+  const fallback = [
+    0.15,
+    0.35,
+    0.62,
+    0.42,
+    0.75,
+    0.32,
+    0.58,
+    0.25,
+    0.48,
+    0.68,
+    0.35,
+    0.55
+  ];
 
-$('#create-room')?.addEventListener(
-  'click',
-  async () => {
-    const name =
-      $('#host-name')?.value.trim() ||
-      'Host';
+  const values =
+    Array.isArray(data?.waveform) &&
+    data.waveform.length
+      ? data.waveform
+      : fallback;
 
-    const success =
-      await send(
-        'CREATE_ROOM',
-        {
-          name,
-          mode: state.mode,
-          scene: state.scene
-        }
-      );
-
-    if (!success) {
-      toast(
-        'Impossibile creare la stanza'
-      );
-    }
-  }
-);
-
-$('#join-room')?.addEventListener(
-  'click',
-  async () => {
-    const name =
-      $('#join-name')?.value.trim() ||
-      'Voce Misteriosa';
-
-    const rawCode =
-      $('#room-code')?.value ||
-      '';
-
-    const roomCode =
-      normalizeRoomCode(
-        rawCode
-      );
-
-    if (!roomCode) {
-      toast(
-        'Inserisci il codice della stanza'
-      );
-      return;
-    }
-
-    if (roomCode.length !== 6) {
-      toast(
-        'Il codice deve avere 6 caratteri'
-      );
-      return;
-    }
-
-    console.log(
-      '🚪 Tentativo ingresso stanza:',
-      rawCode,
-      '→',
-      roomCode,
-      'lunghezza:',
-      roomCode.length
-    );
-
-    const success =
-      await send(
-        'JOIN_ROOM',
-        {
-          name,
-          roomCode
-        }
-      );
-
-    if (!success) {
-      toast(
-        'Impossibile contattare il server'
-      );
-    }
-  }
-);
-
-$('#copy-code')?.addEventListener(
-  'click',
-  async () => {
-    try {
-      await navigator.clipboard.writeText(
-        state.room
-      );
-    } catch {}
-
-    toast(
-      `Codice ${state.room} copiato!`
-    );
-  }
-);
-
-$('#start-round')?.addEventListener(
-  'click',
-  () => {
-    if (
-      state.playerId !==
-      state.hostId
-    ) {
-      toast(
-        'Solo l’host può iniziare la partita'
-      );
-      return;
-    }
-
-    send('START_ROUND');
-  }
-);
-
-async function beginRecording() {
-  if (
-    state.recorder ||
-    state.recordingRequest
-  ) {
-    return;
-  }
-
-  state.recordingRequest =
-    true;
-
-  state.chunks = [];
-
-  $('#record-button')?.classList.add(
-    'recording'
-  );
-
-  if ($('#record-label')) {
-    $('#record-label').textContent =
-      'registrando… clicca per fermare';
-  }
-
-  if ($('#mic-status')) {
-    $('#mic-status').textContent =
-      'richiesta microfono…';
-  }
-
-  if (
-    !navigator.mediaDevices?.getUserMedia ||
-    !window.MediaRecorder
-  ) {
-    state.recordingRequest =
-      false;
-
-    state.recorder = {
-      simulated: true
-    };
-
-    if ($('#mic-status')) {
-      $('#mic-status').textContent =
-        'microfono non disponibile';
-    }
-
-    return;
-  }
-
-  try {
-    const stream =
-      await navigator.mediaDevices.getUserMedia({
-        audio: true
-      });
-
-    state.recordingRequest =
-      false;
-
-    state.recorder =
-      new MediaRecorder(stream);
-
-    state.recorder.ondataavailable =
-      event => {
-        if (event.data.size) {
-          state.chunks.push(
-            event.data
-          );
-        }
-      };
-
-    state.recorder.onstop = () => {
-      const mimeType =
-        state.recorder?.mimeType ||
-        'audio/webm';
-
-      state.recordings[
-        state.line
-      ] = URL.createObjectURL(
-        new Blob(
-          state.chunks,
-          {
-            type: mimeType
-          }
-        )
-      );
-
-      stream
-        .getTracks()
-        .forEach(
-          track =>
-            track.stop()
+  container.innerHTML = values
+    .map((value) => {
+      const height =
+        Math.max(
+          8,
+          Math.min(100, Number(value) * 100)
         );
 
-      state.recorder = null;
-
-      afterLine();
-    };
-
-    state.recorder.start();
-
-    if ($('#mic-status')) {
-      $('#mic-status').textContent =
-        'microfono attivo · parla';
-    }
-  } catch (error) {
-    console.error(error);
-
-    state.recordingRequest =
-      false;
-
-    state.recorder = null;
-
-    $('#record-button')?.classList.remove(
-      'recording'
-    );
-
-    if ($('#record-label')) {
-      $('#record-label').textContent =
-        'microfono bloccato';
-    }
-
-    if ($('#mic-status')) {
-      $('#mic-status').textContent =
-        'permesso microfono negato';
-    }
-
-    toast(
-      'Consenti il microfono al browser e riprova.'
-    );
-  }
+      return `
+        <span
+          class="wave-bar"
+          style="height:${height}%"
+        ></span>
+      `;
+    })
+    .join('');
 }
-
-function stopRecording() {
-  if (state.recordingRequest) {
-    toast(
-      'Attendi il permesso microfono, poi clicca di nuovo per fermare.'
-    );
-    return;
-  }
-
-  if (!state.recorder) {
-    return;
-  }
-
-  $('#record-button')?.classList.remove(
-    'recording'
-  );
-
-  if ($('#record-label')) {
-    $('#record-label').textContent =
-      'clicca per registrare';
-  }
-
-  if ($('#mic-status')) {
-    $('#mic-status').textContent =
-      'microfono pronto';
-  }
-
-  if (
-    state.recorder.stop &&
-    !state.recorder.simulated
-  ) {
-    state.recorder.stop();
-  } else {
-    state.recorder = null;
-    state.recordings[
-      state.line
-    ] = true;
-
-    afterLine();
-  }
-}
-
-function afterLine() {
-  renderLines();
-  updateLine();
-
-  if (
-    state.line <
-    lines.length - 1
-  ) {
-    state.line++;
-
-    renderLines();
-    updateLine();
-
-    toast(
-      'Take salvata · prossima battuta'
-    );
-  } else {
-    $('#finish-recording')?.classList.remove(
-      'hidden'
-    );
-
-    toast(
-      'Tutte le battute sono pronte!'
-    );
-  }
-}
-
-$('#record-button')?.addEventListener(
-  'click',
-  () => {
-    if (
-      state.recorder &&
-      !state.recordingRequest
-    ) {
-      stopRecording();
-    } else {
-      beginRecording();
-    }
-  }
-);
-
-$('#finish-recording')?.addEventListener(
-  'click',
-  finishRecording
-);
-
-function finishRecording() {
-  clearInterval(
-    state.timer
-  );
-
-  renderVotes();
-
-  if ($('#take-index')) {
-    $('#take-index').textContent =
-      '1';
-  }
-
-  const player =
-    state.players.find(
-      p =>
-        p.id ===
-        state.playerId
-    );
-
-  const playerName =
-    player?.name ||
-    'La tua versione';
-
-  if ($('#playback-badge')) {
-    $('#playback-badge').textContent =
-      `LA TAKE DI ${playerName.toUpperCase()}`;
-  }
-
-  if ($('#winner-name')) {
-    $('#winner-name').textContent =
-      playerName;
-  }
-
-  go('playback');
-}
-
-$('#effect-button')?.addEventListener(
-  'click',
-  () => {
-    const effects = [
-      'normale',
-      'eco',
-      'robot',
-      'mostro'
-    ];
-
-    state.effect =
-      effects[
-        (
-          effects.indexOf(
-            state.effect
-          ) + 1
-        ) %
-        effects.length
-      ];
-
-    $('#effect-button').textContent =
-      `✨ effetto: ${state.effect}`;
-
-    toast(
-      `Effetto ${state.effect} selezionato per la battuta`
-    );
-  }
-);
-
-$('#replay-line')?.addEventListener(
-  'click',
-  () => {
-    const video =
-      $('#clip-video');
-
-    if (!video) {
-      toast(
-        'Video della scena non disponibile'
-      );
-      return;
-    }
-
-    video.currentTime = 0;
-    video.muted = false;
-
-    video
-      .play()
-      .catch(error => {
-        console.error(
-          'Errore replay:',
-          error
-        );
-      });
-  }
-);
-
-$('#play-take')?.addEventListener(
-  'click',
-  () => {
-    playRecordedDubs();
-  }
-);
-
-$('#next-take')?.addEventListener(
-  'click',
-  () => {
-    state.take++;
-
-    if (
-      state.take >
-      Math.max(
-        state.players.length,
-        1
-      )
-    ) {
-      state.take = 1;
-    }
-
-    if ($('#take-index')) {
-      $('#take-index').textContent =
-        state.take;
-    }
-
-    const player =
-      state.players[
-        state.take - 1
-      ];
-
-    if ($('#playback-badge')) {
-      $('#playback-badge').textContent =
-        player
-          ? `LA TAKE DI ${player.name.toUpperCase()}`
-          : 'LA TUA TAKE';
-    }
-
-    if ($('#track-fill')) {
-      $('#track-fill').style.width =
-        '0%';
-    }
-  }
-);
-
-$('#submit-vote')?.addEventListener(
-  'click',
-  () => {
-    const selected =
-      document.querySelector(
-        'input[name="vote"]:checked'
-      );
-
-    if (!selected) {
-      toast(
-        'Seleziona una take'
-      );
-      return;
-    }
-
-    send(
-      'SUBMIT_VOTE',
-      {
-        votedFor:
-          selected.value
-      }
-    );
-
-    toast(
-      'Voto registrato!'
-    );
-  }
-);
-
-$('#play-again')?.addEventListener(
-  'click',
-  async () => {
-    state.take = 1;
-    state.line = 0;
-    state.recordings = {};
-
-    renderLines();
-    updateLine();
-
-    go('record');
-
-    await loadSharedScene();
-
-    setPhase('listen');
-  }
-);
-
-function styleClipVideo(video) {
-  video.style.position =
-    'absolute';
-
-  video.style.inset =
-    '0';
-
-  video.style.width =
-    '100%';
-
-  video.style.height =
-    '100%';
-
-  video.style.objectFit =
-    'cover';
-
-  video.style.zIndex =
-    '1';
-
-  video.style.display =
-    'block';
-
-  video.style.visibility =
-    'visible';
-
-  video.style.opacity =
-    '1';
-}
-
-const phaseStyle =
-  document.createElement('style');
-
-phaseStyle.textContent = `
-.phase-card{
-  margin:0 0 16px;
-  padding:13px;
-  border:1px solid #eadfda;
-  border-radius:11px;
-  background:#fff8f2
-}
-.phase-card strong,
-.phase-card small{
-  display:block
-}
-.phase-card strong{
-  font-size:13px
-}
-.phase-card small{
-  color:#766c89;
-  font-size:10px;
-  margin:3px 0 10px
-}
-.phase-actions{
-  display:flex;
-  gap:7px
-}
-.phase-actions button{
-  flex:1;
-  border:1px solid #211b3d;
-  border-radius:8px;
-  padding:9px 6px;
-  background:#fff;
-  color:#211b3d;
-  font:800 10px Nunito;
-  cursor:pointer
-}
-.phase-actions button.active{
-  background:#ff6e63;
-  color:#fff
-}
-.record-button:disabled{
-  opacity:.4;
-  cursor:not-allowed
-}
-#waveform{
-  height:27px;
-  display:flex;
-  align-items:center;
-  gap:2px;
-  margin:9px 0 12px;
-  padding:0 2px
-}
-#waveform i{
-  display:block;
-  flex:1;
-  min-width:2px;
-  background:#ff9f91;
-  border-radius:3px;
-  opacity:.85
-}
-`;
-
-document.head.appendChild(
-  phaseStyle
-);
-
-const phaseCard =
-  document.createElement('div');
-
-phaseCard.className =
-  'phase-card';
-
-phaseCard.innerHTML = `
-  <strong id="phase-title">
-    prima ascolta la scena originale
-  </strong>
-  <small id="phase-help">
-    Ascolta il ritmo, le pause e l’intenzione della battuta.
-  </small>
-  <div
-    id="waveform"
-    aria-label="waveform della voce originale"
-  ></div>
-  <div class="phase-actions">
-    <button id="listen-original">
-      ▶ ascolta originale
-    </button>
-    <button id="enter-recording" disabled>
-      vai alla rec →
-    </button>
-  </div>
-`;
-
-$('.record-panel')?.insertBefore(
-  phaseCard,
-  $('#line-list')
-);
-
-const clipVideo =
-  $('#clip-video');
-
-const recordButton =
-  $('#record-button');
 
 function setPhase(phase) {
-  state.phase =
-    phase;
+  state.linePhase = phase.toUpperCase();
 
-  const listening =
-    phase === 'listen';
+  const phaseName =
+    state.linePhase.toLowerCase();
 
-  if ($('#phase-title')) {
-    $('#phase-title').textContent =
-      listening
-        ? 'prima ascolta la scena originale'
-        : 'ora sostituisci le voci';
-  }
+  $$('.phase').forEach((element) => {
+    element.classList.toggle(
+      'active',
+      element.dataset.phase === phaseName
+    );
+  });
 
-  if ($('#phase-help')) {
-    $('#phase-help').textContent =
-      listening
-        ? 'Ascolta il ritmo, le pause e l’intenzione della battuta.'
-        : 'Il video è muto: premi e parla seguendo la battuta e la waveform.';
-  }
+  updateRecordingUI();
+}
 
-  $('#listen-original')?.classList.toggle(
-    'active',
-    listening
+function updateRecordingUI() {
+  const listenButton = $('#listen-original');
+  const recordButton = $('#enter-recording');
+  const replayButton = $('#replay-recording');
+  const redoButton = $('#redo-recording');
+  const nextButton = $('#next-line');
+
+  const hasRecording = Boolean(
+    state.recordings[getLineKey()]
   );
 
-  if ($('#enter-recording')) {
-    $('#enter-recording').disabled =
-      listening;
+  if (listenButton) {
+    listenButton.disabled =
+      state.linePhase === 'RECORD' ||
+      state.linePhase === 'RECORDING';
   }
 
   if (recordButton) {
     recordButton.disabled =
-      listening;
+      state.linePhase !== 'LISTEN';
   }
 
-  // Quando entri nella fase di ascolto,
-  // il video deve essere disponibile
-  // ma non deve partire automaticamente.
-  if (listening && clipVideo) {
-    clipVideo.pause();
-    clipVideo.currentTime = 0;
-    clipVideo.muted = true;
+  if (replayButton) {
+    replayButton.disabled =
+      !hasRecording ||
+      state.linePhase === 'RECORD' ||
+      state.linePhase === 'RECORDING';
   }
 
-  // Quando entri nella fase REC,
-  // il video continua ma senza audio.
-  if (
-    phase === 'record' &&
-    clipVideo
-  ) {
-    clipVideo.muted = true;
+  if (redoButton) {
+    redoButton.disabled =
+      !hasRecording ||
+      state.linePhase === 'RECORD' ||
+      state.linePhase === 'RECORDING';
+  }
 
-    if (clipVideo.paused) {
-      clipVideo
-        .play()
-        .catch(error => {
-          console.warn(
-            'Autoplay REC bloccato:',
-            error
-          );
-        });
-    }
+  if (nextButton) {
+    nextButton.disabled =
+      !hasRecording ||
+      state.linePhase === 'RECORD' ||
+      state.linePhase === 'RECORDING';
   }
 }
 
-function renderWaveform() {
-  const waveform =
-    $('#waveform');
+async function playCurrentLine() {
+  const video = $('#clip-video');
 
-  if (!waveform) {
+  if (!video) return;
+
+  const line = getLineData();
+
+  if (!line) return;
+
+  const start = getLineStart();
+  const end = getLineEnd();
+
+  if (!Number.isFinite(start) || !Number.isFinite(end)) {
+    toast('Tempi della frase non validi.');
     return;
   }
 
-  const originalLine =
-    lines[state.line]?.[2];
-
-  const values =
-    originalLine?.waveform ||
-    [
-      0.18,
-      0.35,
-      0.52,
-      0.68,
-      0.4,
-      0.75,
-      0.3,
-      0.58,
-      0.42,
-      0.22,
-      0.62,
-      0.34,
-      0.7,
-      0.4,
-      0.24,
-      0.5
-    ];
-
-  waveform.innerHTML =
-    values.map(value => `
-      <i
-        style="height:${Math.max(
-          12,
-          Math.round(
-            Number(value) * 100
-          )
-        )}%"
-      ></i>
-    `).join('');
-}
-
-// UNICO listener per ascoltare la scena originale
-$('#listen-original')?.addEventListener(
-  'click',
-  async () => {
-    const video =
-      $('#clip-video');
-
-    if (
-      !video ||
-      !state.sceneData?.video
-    ) {
-      if ($('#enter-recording')) {
-        $('#enter-recording').disabled =
-          false;
-      }
-
-      toast(
-        'Video della scena non disponibile'
-      );
-
-      return;
-    }
-
-    video.hidden = false;
-    video.muted = false;
-    video.defaultMuted = false;
-
-    styleClipVideo(video);
-
-    try {
-      video.currentTime = 0;
-
-      await video.play();
-
-      if ($('#mic-status')) {
-        $('#mic-status').textContent =
-          'stai ascoltando la voce originale';
-      }
-
-      if ($('#enter-recording')) {
-        $('#enter-recording').disabled =
-          false;
-      }
-
-      toast(
-        'Scena originale in riproduzione'
-      );
-    } catch (error) {
-      console.error(
-        'Errore riproduzione video:',
-        error
-      );
-
-      if ($('#enter-recording')) {
-        $('#enter-recording').disabled =
-          false;
-      }
-
-      toast(
-        'Impossibile riprodurre la scena'
-      );
-    }
-  }
-);
-
-// UNICO listener per entrare nella REC
-$('#enter-recording')?.addEventListener(
-  'click',
-  async () => {
-    const video =
-      $('#clip-video');
-
-    if (
-      !video ||
-      !state.sceneData?.video
-    ) {
-      toast(
-        'Video della scena non disponibile'
-      );
-      return;
-    }
-
-    video.hidden = false;
-    video.muted = true;
-    video.defaultMuted = true;
-
-    styleClipVideo(video);
-
-    // Manteniamo il video originale,
-    // ma senza audio.
-    video.currentTime = 0;
-
-    setPhase('record');
-
-    startTimer();
-
-    if ($('#mic-status')) {
-      $('#mic-status').textContent =
-        'video muto · microfono pronto';
-    }
-
-    try {
-      await video.play();
-    } catch (error) {
-      console.warn(
-        'Riproduzione video in REC bloccata:',
-        error
-      );
-    }
-
-    toast(
-      'Ora registra seguendo la scena'
-    );
-  }
-);
-
-function playRecordedDubs() {
-  const urls =
-    Object.values(
-      state.recordings
-    ).filter(
-      url =>
-        typeof url === 'string' &&
-        url.startsWith('blob:')
-    );
-
-  if (!urls.length) {
-    toast(
-      'Non ci sono ancora registrazioni.'
-    );
+  if (end <= start) {
+    toast('La durata della frase non è valida.');
     return;
   }
 
-  let index = 0;
+  stopLineTimer();
 
-  const playNext = () => {
-    if (
-      index >= urls.length
-    ) {
-      return;
-    }
+  stopCurrentRecording();
 
-    const audio =
-      new Audio(
-        urls[index++]
-      );
+  state.linePhase = 'LISTEN';
+  updateRecordingUI();
 
-    audio.onended =
-      playNext;
+  video.hidden = false;
+  video.removeAttribute('hidden');
 
-    audio
-      .play()
-      .catch(() => {});
-  };
+  styleClipVideo(video);
 
-  playNext();
-}
+  video.muted = false;
+  video.defaultMuted = false;
+  video.loop = false;
 
-renderPlayers();
-renderLines();
-updateLine();
-renderWaveform();
-updateConnectionStatus();
-
-connectSocket().catch(
-  error => {
-    console.error(
-      'Connessione iniziale fallita:',
+  try {
+    video.currentTime = start;
+  } catch (error) {
+    console.warn(
+      'Impossibile impostare currentTime:',
       error
     );
   }
+
+  const stopAtEnd = () => {
+    if (
+      video.currentTime >= end - 0.03
+    ) {
+      video.pause();
+      video.currentTime = start;
+      stopLineTimer();
+    }
+  };
+
+  video.addEventListener(
+    'timeupdate',
+    stopAtEnd
+  );
+
+  const cleanup = () => {
+    video.removeEventListener(
+      'timeupdate',
+      stopAtEnd
+    );
+  };
+
+  state.lineTimer = {
+    cleanup
+  };
+
+  try {
+    await video.play();
+
+    console.log(
+      `▶️ Ascolto frase ${state.line + 1}:`,
+      start,
+      '→',
+      end
+    );
+  } catch (error) {
+    cleanup();
+    state.lineTimer = null;
+
+    console.error(
+      'Errore riproduzione:',
+      error
+    );
+
+    toast(
+      'Premi di nuovo Ascolta per avviare il video.'
+    );
+  }
+}
+
+function stopLineTimer() {
+  if (!state.lineTimer) return;
+
+  state.lineTimer.cleanup?.();
+  state.lineTimer = null;
+
+  const video = $('#clip-video');
+
+  if (video) {
+    video.pause();
+  }
+}
+
+async function startCurrentLineRecording() {
+  const video = $('#clip-video');
+
+  if (!video) return;
+
+  const line = getLineData();
+
+  if (!line) return;
+
+  const start = getLineStart();
+  const end = getLineEnd();
+
+  if (end <= start) {
+    toast('Durata frase non valida.');
+    return;
+  }
+
+  stopLineTimer();
+  stopCurrentRecording();
+
+  state.linePhase = 'RECORDING';
+  state.localRecordingReady = false;
+  state.recordingRequest = true;
+  state.chunks = [];
+
+  updateRecordingUI();
+
+  video.hidden = false;
+  video.removeAttribute('hidden');
+
+  styleClipVideo(video);
+
+  video.muted = true;
+  video.defaultMuted = true;
+  video.loop = false;
+
+  try {
+    video.currentTime = start;
+  } catch (error) {
+    console.warn(
+      'Errore seek iniziale:',
+      error
+    );
+  }
+
+  let stream;
+
+  try {
+    stream =
+      await navigator.mediaDevices.getUserMedia({
+        audio: true
+      });
+  } catch (error) {
+    console.error(
+      'Microfono non disponibile:',
+      error
+    );
+
+    state.linePhase = 'LISTEN';
+    state.recordingRequest = false;
+    updateRecordingUI();
+
+    toast(
+      'Per registrare devi consentire l’accesso al microfono.'
+    );
+
+    return;
+  }
+
+  state.recordingStream = stream;
+
+  let recorder;
+
+  try {
+    recorder = new MediaRecorder(stream);
+  } catch (error) {
+    stream.getTracks().forEach(
+      (track) => track.stop()
+    );
+
+    state.recordingStream = null;
+    state.linePhase = 'LISTEN';
+    state.recordingRequest = false;
+
+    updateRecordingUI();
+
+    toast(
+      'Il browser non supporta la registrazione audio.'
+    );
+
+    return;
+  }
+
+  state.recorder = recorder;
+
+  recorder.addEventListener(
+    'dataavailable',
+    (event) => {
+      if (event.data?.size) {
+        state.chunks.push(event.data);
+      }
+    }
+  );
+
+  recorder.addEventListener(
+    'stop',
+    () => {
+      finishCurrentRecording();
+    },
+    { once: true }
+  );
+
+  const stopAtEnd = () => {
+    if (
+      video.currentTime >= end - 0.03
+    ) {
+      video.pause();
+      video.currentTime = start;
+
+      stopLineTimer();
+
+      if (
+        recorder.state !== 'inactive'
+      ) {
+        recorder.stop();
+      }
+    }
+  };
+
+  video.addEventListener(
+    'timeupdate',
+    stopAtEnd
+  );
+
+  state.lineTimer = {
+    cleanup: () => {
+      video.removeEventListener(
+        'timeupdate',
+        stopAtEnd
+      );
+    }
+  };
+
+  try {
+    recorder.start();
+
+    console.log(
+      `🎙️ REC frase ${state.line + 1}:`,
+      start,
+      '→',
+      end
+    );
+
+    await video.play();
+  } catch (error) {
+    console.error(
+      'Errore avvio registrazione:',
+      error
+    );
+
+    if (
+      recorder.state !== 'inactive'
+    ) {
+      recorder.stop();
+    }
+
+    stopRecordingStream();
+
+    state.linePhase = 'LISTEN';
+    state.recordingRequest = false;
+
+    updateRecordingUI();
+
+    toast(
+      'Impossibile avviare la registrazione.'
+    );
+  }
+}
+
+function finishCurrentRecording() {
+  const key = getLineKey();
+
+  if (!state.chunks.length) {
+    state.recordingRequest = false;
+    state.linePhase = 'LISTEN';
+    stopRecordingStream();
+    updateRecordingUI();
+    return;
+  }
+
+  const mimeType =
+    state.chunks[0]?.type ||
+    'audio/webm';
+
+  const blob = new Blob(
+    state.chunks,
+    { type: mimeType }
+  );
+
+  const oldRecording =
+    state.recordings[key];
+
+  if (oldRecording?.url) {
+    URL.revokeObjectURL(
+      oldRecording.url
+    );
+  }
+
+  const url = URL.createObjectURL(blob);
+
+  state.recordings[key] = {
+    blob,
+    url,
+    take: state.take,
+    line: state.line,
+    duration: getLineDuration()
+  };
+
+  state.currentRecordingUrl = url;
+  state.localRecordingReady = true;
+  state.recordingRequest = false;
+
+  stopRecordingStream();
+
+  state.linePhase = 'REVIEW';
+
+  const video = $('#clip-video');
+
+  if (video) {
+    video.pause();
+    video.muted = true;
+    video.currentTime = getLineStart();
+  }
+
+  updateRecordingUI();
+
+  console.log(
+    '✅ Registrazione salvata:',
+    key
+  );
+
+  toast('Registrazione completata.');
+}
+
+function stopRecordingStream() {
+  if (!state.recordingStream) return;
+
+  state.recordingStream
+    .getTracks()
+    .forEach((track) => track.stop());
+
+  state.recordingStream = null;
+}
+
+function stopCurrentRecording() {
+  stopLineTimer();
+
+  const recorder = state.recorder;
+
+  if (
+    recorder &&
+    recorder.state !== 'inactive'
+  ) {
+    try {
+      recorder.stop();
+    } catch (error) {
+      console.warn(
+        'Errore stop recorder:',
+        error
+      );
+    }
+  }
+
+  state.recorder = null;
+  state.recordingRequest = false;
+
+  stopRecordingStream();
+}
+
+async function playCurrentRecording() {
+  const key = getLineKey();
+  const recording = state.recordings[key];
+
+  if (!recording?.url) {
+    toast('Non hai ancora registrato questa frase.');
+    return;
+  }
+
+  const video = $('#clip-video');
+
+  if (!video) return;
+
+  stopLineTimer();
+
+  video.pause();
+  video.muted = true;
+
+  state.linePhase = 'REVIEW';
+  updateRecordingUI();
+
+  const audio = new Audio(
+    recording.url
+  );
+
+  audio.currentTime = 0;
+
+  state.reviewAudio = audio;
+
+  audio.addEventListener(
+    'ended',
+    () => {
+      state.reviewAudio = null;
+      updateRecordingUI();
+    },
+    { once: true }
+  );
+
+  try {
+    await audio.play();
+
+    console.log(
+      `▶️ Riascolto take ${recording.take}`
+    );
+  } catch (error) {
+    console.error(
+      'Errore riascolto:',
+      error
+    );
+
+    toast(
+      'Impossibile riprodurre la registrazione.'
+    );
+  }
+}
+
+function stopReviewAudio() {
+  if (!state.reviewAudio) return;
+
+  state.reviewAudio.pause();
+  state.reviewAudio.currentTime = 0;
+  state.reviewAudio = null;
+}
+
+function redoCurrentRecording() {
+  stopReviewAudio();
+
+  const key = getLineKey();
+  const recording = state.recordings[key];
+
+  if (recording?.url) {
+    URL.revokeObjectURL(
+      recording.url
+    );
+  }
+
+  delete state.recordings[key];
+
+  state.localRecordingReady = false;
+  state.take += 1;
+  state.linePhase = 'LISTEN';
+
+  updateLine();
+  updateRecordingUI();
+
+  toast('Pronto per una nuova registrazione.');
+
+  startCurrentLineRecording();
+}
+
+async function goToNextLine() {
+  stopReviewAudio();
+  stopLineTimer();
+
+  const currentKey = getLineKey();
+
+  if (!state.recordings[currentKey]) {
+    toast(
+      'Registra la frase prima di andare avanti.'
+    );
+    return;
+  }
+
+  const lines = getLines();
+
+  if (
+    state.line >= lines.length - 1
+  ) {
+    finishRound();
+    return;
+  }
+
+  state.line += 1;
+  state.take = 1;
+  state.linePhase = 'LISTEN';
+  state.localRecordingReady = false;
+
+  const video = $('#clip-video');
+
+  if (video) {
+    video.pause();
+    video.muted = false;
+    video.defaultMuted = false;
+
+    video.hidden = false;
+    video.removeAttribute('hidden');
+
+    styleClipVideo(video);
+
+    try {
+      video.currentTime = getLineStart();
+    } catch (error) {
+      console.warn(
+        'Errore seek nuova frase:',
+        error
+      );
+    }
+  }
+
+  renderLines();
+  updateLine();
+
+  console.log(
+    `➡️ Frase successiva ${state.line + 1}/${lines.length}`
+  );
+
+  await playCurrentLine();
+}
+
+function finishRound() {
+  stopLineTimer();
+  stopReviewAudio();
+  stopCurrentRecording();
+
+  const video = $('#clip-video');
+
+  if (video) {
+    video.pause();
+    video.muted = true;
+  }
+
+  state.linePhase = 'DONE';
+
+  updateRecordingUI();
+
+  send('ROUND_FINISHED', {
+    room: state.room,
+    playerId: state.playerId
+  });
+
+  go('results');
+}
+
+function handleResults(data) {
+  console.log('🏆 RISULTATI:', data);
+
+  const container =
+    $('#results-list') ||
+    $('.results-list');
+
+  if (!container) return;
+
+  const results =
+    Array.isArray(data.results)
+      ? data.results
+      : [];
+
+  container.innerHTML = results
+    .map((result, index) => {
+      return `
+        <div class="result-row">
+          <span>${index + 1}</span>
+          <strong>
+            ${escapeHtml(result.name || 'Giocatore')}
+          </strong>
+          <b>
+            ${Number(result.score || 0)}
+          </b>
+        </div>
+      `;
+    })
+    .join('');
+}
+
+function startTimer() {
+  stopTimer();
+
+  state.seconds = 60;
+
+  updateTimer();
+
+  state.timer = setInterval(() => {
+    state.seconds -= 1;
+
+    updateTimer();
+
+    if (state.seconds <= 0) {
+      stopTimer();
+
+      if (
+        state.linePhase === 'RECORDING'
+      ) {
+        stopCurrentRecording();
+      }
+    }
+  }, 1000);
+}
+
+function stopTimer() {
+  if (!state.timer) return;
+
+  clearInterval(state.timer);
+  state.timer = null;
+}
+
+function updateTimer() {
+  const elements = $$('.timer');
+
+  elements.forEach((element) => {
+    element.textContent =
+      `${Math.floor(state.seconds / 60)}:${String(
+        state.seconds % 60
+      ).padStart(2, '0')}`;
+  });
+}
+
+function createRoom() {
+  const nameInput =
+    $('#player-name') ||
+    $('#name-input');
+
+  const name =
+    nameInput?.value?.trim() ||
+    'Host';
+
+  if (!name) {
+    toast('Inserisci il tuo nome.');
+    return;
+  }
+
+  connect();
+
+  const sendCreate = () => {
+    send('CREATE_ROOM', {
+      name,
+      scene: state.scene,
+      mode: state.mode
+    });
+  };
+
+  if (
+    socket &&
+    socket.readyState === WebSocket.OPEN
+  ) {
+    sendCreate();
+  } else {
+    setTimeout(sendCreate, 300);
+  }
+}
+
+function joinRoom() {
+  const nameInput =
+    $('#player-name') ||
+    $('#name-input');
+
+  const codeInput =
+    $('#room-code') ||
+    $('#join-code');
+
+  const name =
+    nameInput?.value?.trim() ||
+    'Giocatore';
+
+  const room =
+    codeInput?.value
+      ?.trim()
+      ?.toUpperCase();
+
+  if (!room) {
+    toast('Inserisci il codice della stanza.');
+    return;
+  }
+
+  connect();
+
+  const sendJoin = () => {
+    send('JOIN_ROOM', {
+      room,
+      name
+    });
+  };
+
+  if (
+    socket &&
+    socket.readyState === WebSocket.OPEN
+  ) {
+    sendJoin();
+  } else {
+    setTimeout(sendJoin, 300);
+  }
+}
+
+function addDemoGuest() {
+  send('ADD_DEMO_PLAYER', {
+    room: state.room
+  });
+}
+
+function startRound() {
+  if (!state.room) {
+    toast('Stanza non disponibile.');
+    return;
+  }
+
+  send('START_GAME', {
+    room: state.room,
+    scene: state.scene,
+    mode: state.mode
+  });
+}
+
+function setupNavigation() {
+  $('#create-room')?.addEventListener(
+    'click',
+    createRoom
+  );
+
+  $('#join-room')?.addEventListener(
+    'click',
+    joinRoom
+  );
+
+  $('#add-guest')?.addEventListener(
+    'click',
+    addDemoGuest
+  );
+
+  $('#start-round')?.addEventListener(
+    'click',
+    startRound
+  );
+
+  $('#copy-code')?.addEventListener(
+    'click',
+    async () => {
+      if (!state.room) return;
+
+      try {
+        await navigator.clipboard.writeText(
+          state.room
+        );
+
+        toast('Codice copiato.');
+      } catch {
+        toast(
+          `Codice stanza: ${state.room}`
+        );
+      }
+    }
+  );
+
+  $('#back-home')?.addEventListener(
+    'click',
+    () => go('home')
+  );
+
+  $('#back-lobby')?.addEventListener(
+    'click',
+    () => go('lobby')
+  );
+}
+
+function setupRecordingControls() {
+  $('#listen-original')?.addEventListener(
+    'click',
+    async () => {
+      await playCurrentLine();
+    }
+  );
+
+  $('#enter-recording')?.addEventListener(
+    'click',
+    async () => {
+      await startCurrentLineRecording();
+    }
+  );
+
+  $('#replay-recording')?.addEventListener(
+    'click',
+    async () => {
+      await playCurrentRecording();
+    }
+  );
+
+  $('#redo-recording')?.addEventListener(
+    'click',
+    () => {
+      redoCurrentRecording();
+    }
+  );
+
+  $('#next-line')?.addEventListener(
+    'click',
+    async () => {
+      await goToNextLine();
+    }
+  );
+}
+
+function setupVideoEvents() {
+  const video = $('#clip-video');
+
+  if (!video) return;
+
+  video.addEventListener(
+    'loadedmetadata',
+    () => {
+      console.log(
+        '📐 Metadata video:',
+        video.duration
+      );
+    }
+  );
+
+  video.addEventListener(
+    'loadeddata',
+    () => {
+      console.log(
+        '🖼️ Primo frame video disponibile'
+      );
+    }
+  );
+
+  video.addEventListener(
+    'canplay',
+    () => {
+      console.log(
+        '▶️ Video pronto alla riproduzione'
+      );
+    }
+  );
+
+  video.addEventListener(
+    'ended',
+    () => {
+      if (
+        state.linePhase === 'LISTEN'
+      ) {
+        video.currentTime = getLineStart();
+      }
+    }
+  );
+}
+
+function setupKeyboard() {
+  document.addEventListener(
+    'keydown',
+    async (event) => {
+      if (
+        event.key === 'Enter' &&
+        state.screen === 'record'
+      ) {
+        const target = event.target;
+
+        if (
+          target instanceof HTMLInputElement ||
+          target instanceof HTMLTextAreaElement
+        ) {
+          return;
+        }
+
+        if (
+          state.linePhase === 'LISTEN'
+        ) {
+          await startCurrentLineRecording();
+        } else if (
+          state.linePhase === 'REVIEW'
+        ) {
+          await goToNextLine();
+        }
+      }
+    }
+  );
+}
+
+function cleanupRecordings() {
+  Object.values(
+    state.recordings
+  ).forEach((recording) => {
+    if (recording?.url) {
+      URL.revokeObjectURL(
+        recording.url
+      );
+    }
+  });
+
+  state.recordings = {};
+}
+
+window.addEventListener(
+  'beforeunload',
+  () => {
+    stopLineTimer();
+    stopTimer();
+    stopReviewAudio();
+    stopCurrentRecording();
+    cleanupRecordings();
+  }
 );
+
+setupNavigation();
+setupRecordingControls();
+setupVideoEvents();
+setupKeyboard();
+
+connect();
+
+console.log('🎬 RiffRoom app avviata');
