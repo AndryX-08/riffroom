@@ -28,7 +28,10 @@ const state = {
   lineTimer: null,
   currentRecordingUrl: null,
   recordingStream: null,
-  reviewAudio: null
+  reviewAudio: null,
+  finalAudioContext: null,
+  finalMixSources: [],
+  finalMixPlaying: false,
 };
 
 const SERVER_URL =
@@ -531,12 +534,12 @@ function updateModeUI() {
 }
 
 function handleGameStarted(data) {
+  stopFinalMix();
+
   state.phase = data.phase || 'LISTEN';
   state.mode = data.mode || state.mode;
   state.scene = data.scene || state.scene;
-  state.sceneData =
-    data.sceneData || state.sceneData;
-
+  state.sceneData = data.sceneData || state.sceneData;
   state.line = 0;
   state.take = 1;
   state.recordings = {};
@@ -545,29 +548,18 @@ function handleGameStarted(data) {
 
   stopLineTimer();
   stopCurrentRecording();
-  stopReviewAudio();
-  stopTimer();
 
-  updateModeUI();
   go('record');
 
   loadSharedScene()
     .then(() => {
       renderLines();
       updateLine();
-      setPhase('LISTEN');
-      startTimer();
-      playCurrentLine();
+      setPhase('listen');
     })
     .catch((error) => {
-      console.error(
-        'Errore caricamento scena:',
-        error
-      );
-
-      toast(
-        'Impossibile caricare la scena.'
-      );
+      console.error('Errore caricamento scena:', error);
+      toast('Impossibile caricare la scena.');
     });
 }
 
@@ -1451,6 +1443,296 @@ function finishCurrentRecording() {
   );
 }
 
+let finalAudioContext = null;
+let finalSources = [];
+let finalGain = null;
+
+function stopFinalMix() {
+  if (state.finalMixSources?.length) {
+    state.finalMixSources.forEach((source) => {
+      try {
+        source.stop();
+      } catch {}
+    });
+  }
+
+  state.finalMixSources = [];
+  state.finalMixPlaying = false;
+
+  if (state.finalAudioContext) {
+    try {
+      state.finalAudioContext.close();
+    } catch {}
+  }
+
+  state.finalAudioContext = null;
+}
+
+async function getRecordingBlob(recording) {
+  if (!recording) return null;
+
+  if (recording instanceof Blob) {
+    return recording;
+  }
+
+  if (recording.blob instanceof Blob) {
+    return recording.blob;
+  }
+
+  if (recording.url) {
+    const response = await fetch(recording.url);
+
+    if (!response.ok) {
+      throw new Error('Impossibile recuperare la registrazione.');
+    }
+
+    return await response.blob();
+  }
+
+  return null;
+}
+
+async function prepareFinalMix() {
+  if (!state.pack?.lines?.length) {
+    throw new Error('RiffPack non disponibile.');
+  }
+
+  const AudioContextClass =
+    window.AudioContext || window.webkitAudioContext;
+
+  if (!AudioContextClass) {
+    throw new Error('Il browser non supporta il mix audio.');
+  }
+
+  stopFinalMix();
+
+  const audioContext = new AudioContextClass();
+
+  state.finalAudioContext = audioContext;
+
+  const decoded = [];
+
+  for (const line of state.pack.lines) {
+    const recording = state.recordings[line.id];
+
+    if (!recording) {
+      continue;
+    }
+
+    const blob = await getRecordingBlob(recording);
+
+    if (!blob) {
+      continue;
+    }
+
+    const arrayBuffer = await blob.arrayBuffer();
+
+    const audioBuffer = await audioContext.decodeAudioData(
+      arrayBuffer.slice(0)
+    );
+
+    decoded.push({
+      line,
+      audioBuffer
+    });
+  }
+
+  if (!decoded.length) {
+    throw new Error('Non ci sono registrazioni da riprodurre.');
+  }
+
+  return {
+    audioContext,
+    decoded
+  };
+}
+
+async function playFinalScene() {
+  const video = $('#clip-video');
+
+  if (!video) {
+    throw new Error('Video della scena non trovato.');
+  }
+
+  const { audioContext, decoded } = await prepareFinalMix();
+
+  video.pause();
+  video.currentTime = 0;
+  video.muted = true;
+
+  await audioContext.resume();
+
+  const startAt = audioContext.currentTime + 0.15;
+
+  state.finalMixSources = [];
+
+  for (const item of decoded) {
+    const source = audioContext.createBufferSource();
+
+    source.buffer = item.audioBuffer;
+
+    source.connect(audioContext.destination);
+
+    const when =
+      startAt + Math.max(0, Number(item.line.start) || 0);
+
+    source.start(when);
+
+    state.finalMixSources.push(source);
+  }
+
+  state.finalMixPlaying = true;
+
+  video.currentTime = 0;
+
+  await video.play();
+
+  video.onended = () => {
+    stopFinalMix();
+  };
+}
+
+async function playFinalScene() {
+  if (!state.pack || !state.sceneData) {
+    toast('Scena non disponibile.');
+    return;
+  }
+
+  const video = $('#clip-video');
+
+  if (!video) {
+    toast('Video non disponibile.');
+    return;
+  }
+
+  stopFinalMix();
+
+  const lines = Array.isArray(state.pack.lines)
+    ? state.pack.lines
+    : [];
+
+  const recordings = state.recordings || {};
+
+  finalAudioContext = new AudioContext();
+  finalGain = finalAudioContext.createGain();
+  finalGain.gain.value = 1;
+  finalGain.connect(finalAudioContext.destination);
+
+  if (finalAudioContext.state === 'suspended') {
+    await finalAudioContext.resume();
+  }
+
+  video.pause();
+  video.currentTime = 0;
+  video.muted = true;
+
+  /*
+   * Carichiamo tutte le registrazioni prima
+   * di far partire il video.
+   */
+  const decodedRecordings = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const recording = recordings[i];
+
+    if (!recording?.blob && !recording?.url) {
+      continue;
+    }
+
+    try {
+      let arrayBuffer;
+
+      if (recording.blob) {
+        arrayBuffer = await recording.blob.arrayBuffer();
+      } else {
+        const response = await fetch(recording.url);
+        arrayBuffer = await response.arrayBuffer();
+      }
+
+      const audioBuffer =
+        await finalAudioContext.decodeAudioData(arrayBuffer);
+
+      decodedRecordings.push({
+        line: lines[i],
+        audioBuffer
+      });
+    } catch (error) {
+      console.error(
+        `Errore caricamento registrazione ${i}:`,
+        error
+      );
+    }
+  }
+
+  if (!decodedRecordings.length) {
+    toast('Non ci sono registrazioni da riprodurre.');
+    return;
+  }
+
+  /*
+   * Parte il video completo.
+   */
+  await video.play();
+
+  const startedAt = performance.now();
+
+  /*
+   * Ogni registrazione viene fatta partire
+   * esattamente al timestamp della battuta.
+   */
+  decodedRecordings.forEach(({ line, audioBuffer }) => {
+    const delay = Math.max(
+      0,
+      (line.start * 1000)
+    );
+
+    const source = finalAudioContext.createBufferSource();
+
+    source.buffer = audioBuffer;
+    source.connect(finalGain);
+
+    finalSources.push(source);
+
+    setTimeout(() => {
+      if (!finalAudioContext) return;
+
+      try {
+        source.start(0);
+      } catch (error) {
+        console.warn('Source già avviata:', error);
+      }
+    }, delay);
+  });
+
+  console.log(
+    '🎬 Riproduzione scena finale avviata',
+    {
+      duration: state.sceneData.duration,
+      recordings: decodedRecordings.length,
+      startedAt
+    }
+  );
+}
+
+function finishRound() {
+  state.phase = 'PLAYBACK';
+
+  if (state.connected && socket?.readyState === WebSocket.OPEN) {
+    send('SET_PHASE', {
+      phase: 'PLAYBACK'
+    });
+  }
+
+  go('playback');
+
+  setTimeout(() => {
+    playFinalScene().catch(error => {
+      console.error('Errore playback finale:', error);
+      toast('Impossibile riprodurre la scena finale.');
+    });
+  }, 300);
+}
+
 function stopRecordingStream() {
   if (!state.recordingStream) {
     return;
@@ -1492,6 +1774,8 @@ function stopCurrentRecording() {
 }
 
 async function playCurrentRecording() {
+  stopFinalMix();
+  
   const recording =
     state.recordings[
       getLineKey()
